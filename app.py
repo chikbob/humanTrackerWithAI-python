@@ -989,54 +989,85 @@ with work_col:
                 st.info("Загрузите видеофайл, чтобы начать анализ.")
 
         elif source_mode == "📷 Веб-камера":
-            camera_index = st.number_input("Номер камеры", min_value=0, step=1, value=0, key="cam_index")
-            run_col1, run_col2 = st.columns(2)
-            with run_col1:
-                start_button = st.button("▶️ Запустить", key="webcam_start")
-            with run_col2:
-                stop_button = st.button("⏹ Остановить", key="webcam_stop")
+            camera_mode = st.radio(
+                "Режим камеры",
+                options=[
+                    "Браузерная камера (для Streamlit Cloud)",
+                    "Локальная OpenCV камера (только на вашем ПК)"
+                ],
+                index=0,
+                horizontal=False,
+                key="camera_mode"
+            )
 
-            if start_button:
-                st.session_state.running = True
-            if stop_button:
-                st.session_state.running = False
-
-            if st.session_state.running:
-                cap = cv2.VideoCapture(camera_index)
-                if not cap.isOpened():
-                    st.error("❌ Не удалось открыть камеру.")
-                    st.session_state.running = False
-                else:
-                    start_session(source_type="webcam", source_path=f"camera:{camera_index}")
-                    st.info("✅ Камера запущена. Идёт трекинг объектов.")
-                    prev_time = time.time()
-                    frame_index = 0
-
-                    while st.session_state.running:
-                        ret, frame = cap.read()
-                        if not ret:
-                            st.warning("⚠️ Кадр не получен.")
-                            break
-                        frame = rotate_frame(frame)
-                        frame_rgb, detections_meta, processing_time_ms = detect_and_annotate(
-                            frame,
-                            frame_index=frame_index,
-                            source_type="webcam",
-                            use_tracking=True
-                        )
-                        log_frame(frame_index, frame_rgb.shape, processing_time_ms, detections_meta)
-                        frame_index += 1
-
-                        if time.time() - prev_time > 0.1:
-                            frame_display.image(frame_rgb, channels="RGB")
-                            prev_time = time.time()
-
-                    cap.release()
+            if camera_mode == "Браузерная камера (для Streamlit Cloud)":
+                st.info("Используется камера браузера. Нажмите кнопку камеры ниже и сделайте снимок.")
+                shot = st.camera_input("Снимок с камеры", key="browser_cam_input")
+                if shot is not None:
+                    start_session(source_type="webcam_browser", source_path="browser_camera")
+                    image = Image.open(shot).convert("RGB")
+                    img_array = np.array(image)
+                    img_array = rotate_frame(img_array)
+                    frame_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+                    frame_rgb, detections_meta, processing_time_ms = detect_and_annotate(
+                        frame_bgr,
+                        frame_index=0,
+                        source_type="webcam_browser",
+                        use_tracking=False
+                    )
+                    log_frame(0, frame_rgb.shape, processing_time_ms, detections_meta)
                     finish_session()
-                    st.session_state.running = False
-                    st.success("🛑 Распознавание остановлено.")
+                    frame_display.image(frame_rgb, channels="RGB")
+                    st.success("Снимок обработан.")
             else:
-                st.info("Нажмите «Запустить», чтобы начать обработку камеры.")
+                camera_index = st.number_input("Номер камеры", min_value=0, step=1, value=0, key="cam_index")
+                run_col1, run_col2 = st.columns(2)
+                with run_col1:
+                    start_button = st.button("▶️ Запустить", key="webcam_start")
+                with run_col2:
+                    stop_button = st.button("⏹ Остановить", key="webcam_stop")
+
+                if start_button:
+                    st.session_state.running = True
+                if stop_button:
+                    st.session_state.running = False
+
+                if st.session_state.running:
+                    cap = cv2.VideoCapture(camera_index)
+                    if not cap.isOpened():
+                        st.error("❌ Не удалось открыть камеру через OpenCV. На Streamlit Cloud используйте режим «Браузерная камера».")
+                        st.session_state.running = False
+                    else:
+                        start_session(source_type="webcam", source_path=f"camera:{camera_index}")
+                        st.info("✅ Камера запущена. Идёт трекинг объектов.")
+                        prev_time = time.time()
+                        frame_index = 0
+
+                        while st.session_state.running:
+                            ret, frame = cap.read()
+                            if not ret:
+                                st.warning("⚠️ Кадр не получен.")
+                                break
+                            frame = rotate_frame(frame)
+                            frame_rgb, detections_meta, processing_time_ms = detect_and_annotate(
+                                frame,
+                                frame_index=frame_index,
+                                source_type="webcam",
+                                use_tracking=True
+                            )
+                            log_frame(frame_index, frame_rgb.shape, processing_time_ms, detections_meta)
+                            frame_index += 1
+
+                            if time.time() - prev_time > 0.1:
+                                frame_display.image(frame_rgb, channels="RGB")
+                                prev_time = time.time()
+
+                        cap.release()
+                        finish_session()
+                        st.session_state.running = False
+                        st.success("🛑 Распознавание остановлено.")
+                else:
+                    st.info("Нажмите «Запустить», чтобы начать обработку камеры.")
 
 with info_col:
     with st.container(border=True):
