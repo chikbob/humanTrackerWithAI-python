@@ -14,7 +14,12 @@ import pandas as pd
 from typing import Optional
 from collections import Counter
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "monitoring.db")
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DB_PATH = os.path.join(APP_DIR, "monitoring.db")
+DB_PATH = os.getenv("MONITORING_DB_PATH", DEFAULT_DB_PATH)
+
+if not os.access(os.path.dirname(DB_PATH) or ".", os.W_OK):
+    DB_PATH = "/tmp/monitoring.db"
 
 
 def get_db_conn():

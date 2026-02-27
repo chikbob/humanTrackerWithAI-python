@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
+.idea/
+
+# Local runtime data
+monitoring.db
+
+# Model weights (downloaded automatically by Ultralytics when needed)
+*.pt
