@@ -13,6 +13,12 @@ from datetime import datetime
 import pandas as pd
 from typing import Optional
 from collections import Counter
+try:
+    import av
+    from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
+    WEBRTC_AVAILABLE = True
+except Exception:
+    WEBRTC_AVAILABLE = False
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DB_PATH = os.path.join(APP_DIR, "monitoring.db")
@@ -20,6 +26,10 @@ DB_PATH = os.getenv("MONITORING_DB_PATH", DEFAULT_DB_PATH)
 
 if not os.access(os.path.dirname(DB_PATH) or ".", os.W_OK):
     DB_PATH = "/tmp/monitoring.db"
+
+RTC_CONFIG = RTCConfiguration(
+    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+) if WEBRTC_AVAILABLE else None
 
 
 def get_db_conn():
@@ -777,6 +787,30 @@ def detect_and_annotate(frame_bgr, frame_index: int, source_type: str, use_track
     return frame_rgb, detections_meta, processing_time_ms
 
 
+def detect_and_draw_live(frame_bgr):
+    frame_bgr = rotate_frame(frame_bgr)
+    results = model.predict(frame_bgr, imgsz=640, conf=conf_threshold, verbose=False)
+    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    frame_h, frame_w, _ = frame_rgb.shape
+
+    for r in results:
+        for i, box in enumerate(r.boxes.xyxy.cpu().numpy()):
+            cls_id = int(r.boxes.cls[i])
+            cls_name = model.names[cls_id]
+            conf = float(r.boxes.conf[i])
+            x1, y1, x2, y2 = map(int, box)
+            cx = (x1 + x2) / 2.0
+            cy = (y1 + y2) / 2.0
+            if not class_allowed(cls_name):
+                continue
+            if enable_roi and not is_inside_roi(cx, cy, frame_w, frame_h):
+                continue
+            frame_rgb = draw_fancy_box(frame_rgb, box, cls_name, conf)
+
+    frame_rgb = draw_roi_overlay(frame_rgb)
+    return frame_rgb
+
+
 # === ФУНКЦИИ ДЛЯ ОБРАБОТКИ КАДРОВ И ЛОГИРОВАНИЯ (Sessions, Frames, Detections) ===
 def rotate_frame(frame):
     angle = st.session_state.rotation_angle
@@ -992,7 +1026,8 @@ with work_col:
             camera_mode = st.radio(
                 "Режим камеры",
                 options=[
-                    "Браузерная камера (для Streamlit Cloud)",
+                    "Браузерная камера RT (для Streamlit Cloud)",
+                    "Браузерная камера (снимок)",
                     "Локальная OpenCV камера (только на вашем ПК)"
                 ],
                 index=0,
@@ -1000,8 +1035,46 @@ with work_col:
                 key="camera_mode"
             )
 
-            if camera_mode == "Браузерная камера (для Streamlit Cloud)":
-                st.info("Используется камера браузера. Нажмите кнопку камеры ниже и сделайте снимок.")
+            if camera_mode == "Браузерная камера RT (для Streamlit Cloud)":
+                if not WEBRTC_AVAILABLE:
+                    st.error("Для realtime-режима установите зависимость streamlit-webrtc.")
+                else:
+                    if "browser_rt_on" not in st.session_state:
+                        st.session_state.browser_rt_on = False
+
+                    ctl1, ctl2 = st.columns(2)
+                    with ctl1:
+                        start_rt = st.button("▶️ Запустить камеру", key="browser_rt_start")
+                    with ctl2:
+                        stop_rt = st.button("⏹ Остановить камеру", key="browser_rt_stop")
+
+                    if start_rt and not st.session_state.browser_rt_on:
+                        st.session_state.browser_rt_on = True
+                    if stop_rt and st.session_state.browser_rt_on:
+                        st.session_state.browser_rt_on = False
+                        st.success("🛑 Камера остановлена.")
+
+                    st.caption("Нажмите Start в виджете камеры и разрешите доступ в браузере.")
+
+                    def _video_frame_callback(frame):
+                        frame_bgr = frame.to_ndarray(format="bgr24")
+                        frame_rgb = detect_and_draw_live(frame_bgr)
+                        return av.VideoFrame.from_ndarray(cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR), format="bgr24")
+
+                    if st.session_state.browser_rt_on:
+                        webrtc_streamer(
+                            key="browser_webrtc_stream",
+                            mode=WebRtcMode.SENDRECV,
+                            rtc_configuration=RTC_CONFIG,
+                            media_stream_constraints={"video": True, "audio": False},
+                            video_frame_callback=_video_frame_callback,
+                            async_processing=True,
+                        )
+                    else:
+                        st.info("Нажмите «Запустить камеру», чтобы начать realtime.")
+
+            elif camera_mode == "Браузерная камера (снимок)":
+                st.info("Режим снимка: нажмите кнопку камеры ниже и сделайте фото.")
                 shot = st.camera_input("Снимок с камеры", key="browser_cam_input")
                 if shot is not None:
                     start_session(source_type="webcam_browser", source_path="browser_camera")
