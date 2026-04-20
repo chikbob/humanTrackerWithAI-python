@@ -201,6 +201,112 @@ def _render_events_tab(st, events: list[dict], access_logs: list[dict], show_adv
         ]
     )
 
+    journal_rows = []
+    for event in events:
+        access_log_match = next(
+            (row for row in access_logs if row["id"] == event.get("access_log_id")),
+            None,
+        )
+        journal_rows.append(
+            {
+                "event_id": event["event_id"],
+                "timestamp": datetime.fromtimestamp(event["timestamp"]),
+                "event_type": event.get("event_type", "object_detected"),
+                "event_scope": event.get("event_scope", "raw"),
+                "access_point": (
+                    access_log_match["access_point_name"]
+                    if access_log_match and access_log_match.get("access_point_name")
+                    else "не задана"
+                ),
+                "employee_name": (
+                    access_log_match["employee_name"]
+                    if access_log_match and access_log_match.get("employee_name")
+                    else "не определен"
+                ),
+                "confidence": round(event["confidence"], 3),
+                "note": event.get("message", ""),
+            }
+        )
+    df_journal = pd.DataFrame(journal_rows)
+
+    st.caption("Таблица журнала событий проходной")
+    min_date = df_journal["timestamp"].min().date() if not df_journal.empty else datetime.now().date()
+    max_date = df_journal["timestamp"].max().date() if not df_journal.empty else datetime.now().date()
+    date_from, date_to = st.date_input(
+        "Период журнала",
+        value=(min_date, max_date),
+        key="access_journal_dates",
+    )
+    if not isinstance(date_from, datetime):
+        date_from_value = pd.Timestamp(date_from)
+    else:
+        date_from_value = pd.Timestamp(date_from.date())
+    if not isinstance(date_to, datetime):
+        date_to_value = pd.Timestamp(date_to)
+    else:
+        date_to_value = pd.Timestamp(date_to.date())
+
+    journal_col1, journal_col2, journal_col3 = st.columns(3)
+    with journal_col1:
+        selected_journal_event_types = st.multiselect(
+            "Тип события проходной",
+            options=sorted(df_journal["event_type"].dropna().unique().tolist()),
+            default=[],
+            key="journal_event_types",
+        )
+    with journal_col2:
+        selected_access_points = st.multiselect(
+            "Точка прохода",
+            options=sorted(df_journal["access_point"].dropna().unique().tolist()),
+            default=[],
+            key="journal_access_points",
+        )
+    with journal_col3:
+        selected_scopes = st.multiselect(
+            "Уровень события",
+            options=sorted(df_journal["event_scope"].dropna().unique().tolist()),
+            default=[],
+            key="journal_event_scope",
+        )
+
+    filtered_journal = df_journal.copy()
+    filtered_journal = filtered_journal[
+        (filtered_journal["timestamp"].dt.date >= date_from_value.date())
+        & (filtered_journal["timestamp"].dt.date <= date_to_value.date())
+    ]
+    if selected_journal_event_types:
+        filtered_journal = filtered_journal[filtered_journal["event_type"].isin(selected_journal_event_types)]
+    if selected_access_points:
+        filtered_journal = filtered_journal[filtered_journal["access_point"].isin(selected_access_points)]
+    if selected_scopes:
+        filtered_journal = filtered_journal[filtered_journal["event_scope"].isin(selected_scopes)]
+
+    if filtered_journal.empty:
+        empty_df = pd.DataFrame(
+            columns=["Время", "Тип события", "Уровень", "Точка прохода", "Сотрудник", "Уверенность", "Примечание"]
+        )
+        st.dataframe(empty_df, use_container_width=True, hide_index=True)
+        st.caption("По выбранным фильтрам записи отсутствуют.")
+    else:
+        journal_view = filtered_journal.rename(
+            columns={
+                "timestamp": "Время",
+                "event_type": "Тип события",
+                "event_scope": "Уровень",
+                "access_point": "Точка прохода",
+                "employee_name": "Сотрудник",
+                "confidence": "Уверенность",
+                "note": "Примечание",
+            }
+        )
+        st.dataframe(
+            journal_view[
+                ["Время", "Тип события", "Уровень", "Точка прохода", "Сотрудник", "Уверенность", "Примечание"]
+            ].sort_values("Время", ascending=False),
+            use_container_width=True,
+            hide_index=True,
+        )
+
     if access_logs:
         st.caption("Журнал проходов предприятия")
         df_access_logs = pd.DataFrame(
@@ -305,19 +411,39 @@ def _render_employees_tab(st, employees: list[dict]):
 def _render_access_stats_tab(st, events: list[dict], access_logs: list[dict]):
     st.markdown("**Статистика проходов**")
 
+    raw_events = [event for event in events if event.get("event_scope") == "raw"]
     domain_events = [event for event in events if event.get("event_scope") == "domain"]
+    person_detections = [
+        event
+        for event in raw_events
+        if event.get("event_type") == "object_detected" and event.get("class_name") == "person"
+    ]
     entered_events = [event for event in domain_events if event.get("event_type") == "person_entered_entry_zone"]
     left_events = [event for event in domain_events if event.get("event_type") == "person_left_entry_zone"]
     prolonged_events = [event for event in domain_events if event.get("event_type") == "prolonged_presence_near_entry"]
 
     met1, met2, met3, met4 = st.columns(4)
-    met1.metric("Входов в зону прохода", len(entered_events))
-    met2.metric("Выходов из зоны прохода", len(left_events))
+    met1.metric("Обнаружений людей", len(person_detections))
+    met2.metric("Входов в зону прохода", len(entered_events))
     met3.metric("Длительных присутствий", len(prolonged_events))
     met4.metric("Записей в журнале проходов", len(access_logs))
 
-    if not domain_events:
+    if not events:
         st.info("Статистика появится после первых событий во входной зоне предприятия.")
+        return
+
+    stats_rows = [
+        {
+            "timestamp": datetime.fromtimestamp(event["timestamp"]),
+            "event_type": event.get("event_type", ""),
+            "event_scope": event.get("event_scope", "raw"),
+            "confidence": round(event["confidence"], 3),
+        }
+        for event in events
+    ]
+    df_stats = pd.DataFrame(stats_rows)
+    if df_stats.empty:
+        st.info("Недостаточно данных для построения статистики.")
         return
 
     df_domain = pd.DataFrame(
@@ -330,13 +456,27 @@ def _render_access_stats_tab(st, events: list[dict], access_logs: list[dict]):
             for event in domain_events
         ]
     )
-    df_domain["date"] = df_domain["timestamp"].dt.floor("D")
-    st.caption("События проходной по дням")
-    st.line_chart(df_domain.groupby("date").size().rename("events"))
+    if not df_domain.empty:
+        domain_summary = pd.DataFrame(
+            [
+                {"Показатель": "Обнаружения людей", "Значение": len(person_detections)},
+                {"Показатель": "Входы в зону прохода", "Значение": len(entered_events)},
+                {"Показатель": "Выходы из зоны прохода", "Значение": len(left_events)},
+                {"Показатель": "Длительные присутствия", "Значение": len(prolonged_events)},
+            ]
+        )
+        st.dataframe(domain_summary, use_container_width=True, hide_index=True)
 
-    event_distribution = df_domain["event_type"].value_counts().rename_axis("event_type").to_frame("count")
-    st.caption("Распределение доменных событий")
-    st.bar_chart(event_distribution)
+    df_stats["bucket"] = df_stats["timestamp"].dt.floor("H")
+    time_distribution = df_stats.groupby("bucket").size().rename("events")
+    if not time_distribution.empty:
+        st.caption("Распределение событий по времени")
+        st.line_chart(time_distribution)
+
+    event_distribution = df_stats["event_type"].value_counts().rename_axis("event_type").to_frame("count")
+    if not event_distribution.empty:
+        st.caption("Распределение типов событий")
+        st.bar_chart(event_distribution)
 
 
 def _render_export_tab(st, sessions: list[dict], events: list[dict]):
