@@ -572,140 +572,54 @@ def _render_browser_camera_monitor(
     db_upsert_session,
     standalone_mode: bool = False,
 ):
-    """Render a browser camera workflow with dedicated live mode and fallback snapshot mode."""
-    browser_modes = ["Live tracking", "Совместимый snapshot"]
+    """Render browser camera only as a real live mode via WebRTC."""
     if not WEBRTC_AVAILABLE:
-        browser_modes = ["Совместимый snapshot"]
-
-    if standalone_mode:
-        browser_mode = "Live tracking" if WEBRTC_AVAILABLE else "Совместимый snapshot"
-    else:
-        browser_mode = st.radio(
-            "Режим браузерной камеры",
-            options=browser_modes,
-            horizontal=True,
-            key=f"browser_camera_mode_{_safe_stream_key(source_label)}",
+        st.error(
+            "Browser live camera недоступна: в текущем окружении не установлен streamlit-webrtc/av. "
+            "Для этого режима нужен Python 3.11 и рабочее WebRTC-окружение."
         )
-
-    if browser_mode == "Live tracking" and WEBRTC_AVAILABLE:
-        if not standalone_mode:
-            st.caption(
-                "Отдельное окно live monitoring может работать непрерывно и визуально сопровождать всех людей в кадре. "
-                "Для удаленного сервера рекомендуется настроить TURN."
-            )
-
-        def _video_frame_callback(frame):
-            frame_bgr = frame.to_ndarray(format="bgr24")
-            frame_rgb = track_and_draw_live(
-                frame_bgr,
-                model=model,
-                conf_threshold=conf_threshold,
-                inference_size=inference_size,
-                class_meta=class_meta,
-                animal_filter="всё",
-                animal_classes=ANIMAL_CLASSES,
-                track_classes=["person"],
-                roi_config={"enable_roi": True, "roi_x": 20, "roi_y": 20, "roi_w": 60, "roi_h": 60},
-                draw_box_fn=draw_fancy_box,
-            )
-            session_state.browser_camera_last_frame_at = time.time()
-            return av.VideoFrame.from_ndarray(cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR), format="bgr24")
-
-        webrtc_streamer(
-            key=f"browser_camera_stream_{_safe_stream_key(source_label)}",
-            mode=WebRtcMode.SENDRECV,
-            rtc_configuration=RTC_CONFIG,
-            media_stream_constraints={"video": True, "audio": False},
-            video_frame_callback=_video_frame_callback,
-            async_processing=True,
+        st.caption(
+            "Используйте локальную OpenCV камеру для локального запуска или production-источник RTSP/USB/HLS."
         )
         return session_state.get("browser_camera_last_frame_at")
 
-    if WEBRTC_AVAILABLE and not standalone_mode:
+    if not standalone_mode:
+        st.caption(
+            "Браузерная камера работает только как непрерывный live mode через WebRTC. "
+            "Если соединение не устанавливается, проверьте HTTPS, TURN и сетевое окружение."
+        )
+
+    def _video_frame_callback(frame):
+        frame_bgr = frame.to_ndarray(format="bgr24")
+        frame_rgb = track_and_draw_live(
+            frame_bgr,
+            model=model,
+            conf_threshold=conf_threshold,
+            inference_size=inference_size,
+            class_meta=class_meta,
+            animal_filter="всё",
+            animal_classes=ANIMAL_CLASSES,
+            track_classes=["person"],
+            roi_config={"enable_roi": True, "roi_x": 20, "roi_y": 20, "roi_w": 60, "roi_h": 60},
+            draw_box_fn=draw_fancy_box,
+        )
+        session_state.browser_camera_last_frame_at = time.time()
+        return av.VideoFrame.from_ndarray(cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR), format="bgr24")
+
+    webrtc_streamer(
+        key=f"browser_camera_stream_{_safe_stream_key(source_label)}",
+        mode=WebRtcMode.SENDRECV,
+        rtc_configuration=RTC_CONFIG,
+        media_stream_constraints={"video": True, "audio": False},
+        video_frame_callback=_video_frame_callback,
+        async_processing=True,
+    )
+    if not standalone_mode:
         st.info(
-            "Совместимый snapshot работает стабильнее, но не является непрерывным live-потоком. "
-            "Для отдельного окна и непрерывного трекинга используйте режим Live tracking."
+            "Если видите долгую установку соединения, это не snapshot-проблема, а WebRTC/TURN-сценарий. "
+            "Для удаленного запуска используйте подготовленный coturn-контур."
         )
-    elif not WEBRTC_AVAILABLE:
-        st.warning(
-            "В текущем окружении не установлен streamlit-webrtc, поэтому непрерывный browser live недоступен. "
-            "Сейчас доступен только совместимый snapshot-режим."
-        )
-    shot = st.camera_input("Кадр из браузерной камеры", key="live_monitor_browser_camera")
-    if shot is None:
-        st.info("Разрешите доступ к камере в браузере и сделайте кадр для анализа входной зоны.")
-        return session_state.get("browser_camera_last_frame_at")
-
-    start_session(
-        session_state,
-        db_upsert_session,
-        model_name=model_name,
-        source_type="webcam_browser",
-        source_path="browser_camera_live",
-        animal_filter="всё",
-        track_classes=["person"],
-        rotation_angle=0,
-    )
-    image = Image.open(shot).convert("RGB")
-    frame_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    frame_rgb = _process_single_frame(
-        st=st,
-        frame_bgr=frame_bgr,
-        frame_index=0,
-        source_type="webcam_browser",
-        use_tracking=False,
-        frame_display=st.empty(),
-        model=model,
-        class_meta=class_meta,
-        inference_size=inference_size,
-        conf_threshold=conf_threshold,
-        session_state=session_state,
-        db_insert_frame=db_insert_frame,
-        db_upsert_session=db_upsert_session,
-        rotation_angle=0,
-        register_event_pipeline=lambda **kwargs: register_detection_and_entry_events(
-            session_state,
-            db_insert_event,
-            session=kwargs["session"],
-            frame_index=kwargs["frame_index"],
-            detection=kwargs["detection"],
-            source_type=kwargs["source_type"],
-            settings={
-                "rule_count_enabled": False,
-                "rule_class": "person",
-                "rule_n": 3,
-                "rule_t": 10,
-                "rule_disappear_enabled": True,
-                "rule_disappear_seconds": 5,
-                "enable_notifications": False,
-                "notify_conf_threshold": conf_threshold,
-                "notify_classes": ["person"],
-                "enable_roi": True,
-                "default_access_point_id": None,
-                "prolonged_presence_seconds": 10,
-                "event_cooldown": 5,
-            },
-            notify_callback=lambda _text: add_notification(session_state, _text, enabled=False, toast_callback=None),
-        ),
-        process_disappeared=lambda **kwargs: process_disappeared_tracks(
-            session_state,
-            db_insert_event,
-            session=kwargs["session"],
-            frame_index=kwargs["frame_index"],
-            source_type=kwargs["source_type"],
-            frame_width=kwargs["frame_width"],
-            frame_height=kwargs["frame_height"],
-            rule_disappear_enabled=True,
-            rule_disappear_seconds=5,
-            enable_notifications=False,
-            notify_callback=lambda _text: None,
-            default_access_point_id=None,
-        ),
-    )
-    finish_session(session_state, db_upsert_session)
-    session_state.browser_camera_last_frame_at = time.time()
-    st.image(frame_rgb, channels="RGB", use_container_width=True, caption="Браузерная камера: обработанный кадр")
-    return session_state.browser_camera_last_frame_at
+    return session_state.get("browser_camera_last_frame_at")
 
 
 def _process_single_frame(
