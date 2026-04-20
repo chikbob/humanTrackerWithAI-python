@@ -12,11 +12,15 @@ def normalize_source_url(source_type: str, source_url: str):
             return int(source_url)
         except ValueError:
             return source_url
+    if source_type == "browser_camera":
+        return "browser_camera"
     return source_url
 
 
 def test_video_source_connection(source_type: str, source_url: str, timeout_frames: int = 30) -> tuple[bool, str]:
     """Perform a safe, short connection check for a video source."""
+    if source_type == "browser_camera":
+        return True, "Источник сохранен. Браузерная камера доступна из раздела онлайн-мониторинга."
     normalized_source = normalize_source_url(source_type, source_url)
     cap = cv2.VideoCapture(normalized_source)
     if not cap.isOpened():

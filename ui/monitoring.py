@@ -40,16 +40,32 @@ def render_online_monitoring(
     demo_mode: bool,
 ):
     statuses_by_id = {status["source_id"]: status for status in worker_statuses}
+    source_options = []
+    source_map = {}
+    for source in active_sources:
+        label = f"{source['name']} [{source['source_type']}]"
+        source_options.append(label)
+        source_map[label] = {"kind": "production", "source": source}
+    browser_option = "Браузерная камера [demo/fallback]"
+    source_options.append(browser_option)
+    source_map[browser_option] = {"kind": "browser_camera", "source": None}
+
+    selected_option = st.selectbox(
+        "Источник live monitoring",
+        options=source_options,
+        help="Можно переключаться между активным production-источником и браузерной камерой.",
+    )
+    selected_binding = source_map[selected_option]
+    selected_source = selected_binding["source"]
+    selected_status = statuses_by_id.get(selected_source["id"], {}) if selected_source else {}
+    selected_last_frame_at = selected_status.get("last_frame_at")
+
     left_col, right_col = st.columns([1.9, 1.0], gap="large")
 
     with left_col:
         with st.container(border=True):
             st.subheader("Live monitoring")
-            if active_sources:
-                source_labels = {f"{source['name']} [{source['source_type']}]": source for source in active_sources}
-                selected_label = st.selectbox("Источник production-потока", options=list(source_labels.keys()))
-                selected_source = source_labels[selected_label]
-                selected_status = statuses_by_id.get(selected_source["id"], {})
+            if selected_binding["kind"] == "production" and selected_source is not None:
                 snapshot_path = selected_status.get("last_snapshot_path")
                 if snapshot_path and Path(snapshot_path).exists():
                     st.image(snapshot_path, use_container_width=True, caption=f"Входная зона: {selected_source['name']}")
@@ -59,8 +75,30 @@ def render_online_monitoring(
                     "ROI входной зоны и детекции сотрудников отрисовываются серверным worker "
                     "и поступают в интерфейс через БД и runtime snapshots."
                 )
+            elif selected_binding["kind"] == "browser_camera":
+                st.caption(
+                    "Браузерная камера доступна как дополнительный способ live monitoring, "
+                    "если production-источник временно недоступен."
+                )
+                browser_last_frame_at = _render_browser_camera_monitor(
+                    st,
+                    model_name=model_name,
+                    model=model,
+                    class_meta=class_meta,
+                    inference_size=inference_size,
+                    conf_threshold=conf_threshold,
+                    session_state=session_state,
+                    db_insert_event=db_insert_event,
+                    db_insert_frame=db_insert_frame,
+                    db_upsert_session=db_upsert_session,
+                )
+                if browser_last_frame_at is not None:
+                    selected_last_frame_at = browser_last_frame_at
             else:
-                st.warning("Нет активных production-источников. Добавьте RTSP/IP/USB источник в разделе «Источники видео».")
+                st.warning(
+                    "Нет активных production-источников. Добавьте RTSP/IP/USB источник в разделе "
+                    "«Источники видео» или переключитесь на браузерную камеру."
+                )
 
         with st.container(border=True):
             st.subheader("Последние события входной зоны")
@@ -78,14 +116,17 @@ def render_online_monitoring(
     with right_col:
         with st.container(border=True):
             st.subheader("Панель состояния")
-            selected_source = active_sources[0] if active_sources else None
-            selected_status = statuses_by_id.get(selected_source["id"], {}) if selected_source else {}
-            st.metric("FPS", round(selected_status.get("fps") or 0.0, 2))
+            status_fps = round(selected_status.get("fps") or 0.0, 2) if selected_binding["kind"] == "production" else "snapshot"
+            st.metric("FPS", status_fps)
             st.metric("confidence threshold", round(conf_threshold, 2))
-            st.metric("Источник потока", selected_source["name"] if selected_source else "не выбран")
+            if selected_binding["kind"] == "production" and selected_source is not None:
+                source_name = selected_source["name"]
+            else:
+                source_name = "Браузерная камера"
+            st.metric("Источник потока", source_name)
             st.metric("Активная модель", model_name)
             st.metric("Точка прохода", access_point_name)
-            st.metric("Последний кадр", _fmt_ts(selected_status.get("last_frame_at")))
+            st.metric("Последний кадр", _fmt_ts(selected_last_frame_at))
             if selected_status.get("last_error"):
                 st.error(selected_status["last_error"])
 
@@ -366,6 +407,97 @@ def _render_demo_workspace(
             cap.release()
             finish_session(session_state, db_upsert_session)
             session_state.fallback_camera_running = False
+
+
+def _render_browser_camera_monitor(
+    st,
+    *,
+    model_name: str,
+    model,
+    class_meta: dict,
+    inference_size: int,
+    conf_threshold: float,
+    session_state,
+    db_insert_event,
+    db_insert_frame,
+    db_upsert_session,
+):
+    """Process a browser camera snapshot directly in the main live monitoring panel."""
+    shot = st.camera_input("Кадр из браузерной камеры", key="live_monitor_browser_camera")
+    if shot is None:
+        st.info("Разрешите доступ к камере в браузере и сделайте кадр для анализа входной зоны.")
+        return session_state.get("browser_camera_last_frame_at")
+
+    start_session(
+        session_state,
+        db_upsert_session,
+        model_name=model_name,
+        source_type="webcam_browser",
+        source_path="browser_camera_live",
+        animal_filter="всё",
+        track_classes=["person"],
+        rotation_angle=0,
+    )
+    image = Image.open(shot).convert("RGB")
+    frame_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    frame_rgb = _process_single_frame(
+        st=st,
+        frame_bgr=frame_bgr,
+        frame_index=0,
+        source_type="webcam_browser",
+        use_tracking=False,
+        frame_display=st.empty(),
+        model=model,
+        class_meta=class_meta,
+        inference_size=inference_size,
+        conf_threshold=conf_threshold,
+        session_state=session_state,
+        db_insert_frame=db_insert_frame,
+        db_upsert_session=db_upsert_session,
+        rotation_angle=0,
+        register_event_pipeline=lambda **kwargs: register_detection_and_entry_events(
+            session_state,
+            db_insert_event,
+            session=kwargs["session"],
+            frame_index=kwargs["frame_index"],
+            detection=kwargs["detection"],
+            source_type=kwargs["source_type"],
+            settings={
+                "rule_count_enabled": False,
+                "rule_class": "person",
+                "rule_n": 3,
+                "rule_t": 10,
+                "rule_disappear_enabled": True,
+                "rule_disappear_seconds": 5,
+                "enable_notifications": False,
+                "notify_conf_threshold": conf_threshold,
+                "notify_classes": ["person"],
+                "enable_roi": True,
+                "default_access_point_id": None,
+                "prolonged_presence_seconds": 10,
+                "event_cooldown": 5,
+            },
+            notify_callback=lambda _text: add_notification(session_state, _text, enabled=False, toast_callback=None),
+        ),
+        process_disappeared=lambda **kwargs: process_disappeared_tracks(
+            session_state,
+            db_insert_event,
+            session=kwargs["session"],
+            frame_index=kwargs["frame_index"],
+            source_type=kwargs["source_type"],
+            frame_width=kwargs["frame_width"],
+            frame_height=kwargs["frame_height"],
+            rule_disappear_enabled=True,
+            rule_disappear_seconds=5,
+            enable_notifications=False,
+            notify_callback=lambda _text: None,
+            default_access_point_id=None,
+        ),
+    )
+    finish_session(session_state, db_upsert_session)
+    session_state.browser_camera_last_frame_at = time.time()
+    st.image(frame_rgb, channels="RGB", use_container_width=True, caption="Браузерная камера: обработанный кадр")
+    return session_state.browser_camera_last_frame_at
 
 
 def _process_single_frame(

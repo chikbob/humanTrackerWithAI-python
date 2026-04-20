@@ -11,6 +11,7 @@ SOURCE_TYPES = {
     "rtsp": "RTSP/IP camera",
     "stream_url": "HLS / HTTP stream",
     "usb_camera": "USB / локальная камера на сервере",
+    "browser_camera": "Браузерная камера",
 }
 
 
@@ -52,19 +53,22 @@ def render_video_sources(
             with st.form("create_video_source_form", clear_on_submit=True):
                 name = st.text_input("Наименование")
                 source_type = st.selectbox("Тип источника", options=list(SOURCE_TYPES.keys()), format_func=lambda key: SOURCE_TYPES[key])
-                source_url = st.text_input("URL / индекс устройства")
+                source_url_label = "URL / индекс устройства" if source_type != "browser_camera" else "Идентификатор источника"
+                source_url_placeholder = "" if source_type != "browser_camera" else "browser_camera"
+                source_url = st.text_input(source_url_label, value=source_url_placeholder)
                 location = st.text_input("Локация")
                 description = st.text_area("Описание")
                 is_active = st.checkbox("Сделать активным сразу", value=True)
                 submitted = st.form_submit_button("Сохранить источник")
             if submitted:
-                if not name.strip() or not source_url.strip():
-                    st.error("Необходимо указать название и URL/индекс устройства.")
+                normalized_source_url = source_url.strip() or ("browser_camera" if source_type == "browser_camera" else "")
+                if not name.strip() or not normalized_source_url:
+                    st.error("Необходимо указать название и значение источника.")
                 else:
                     create_video_source_fn(
                         name=name,
                         source_type=source_type,
-                        source_url=source_url,
+                        source_url=normalized_source_url,
                         location=location,
                         description=description,
                         is_active=is_active,
@@ -103,7 +107,8 @@ def render_video_sources(
                         index=list(SOURCE_TYPES.keys()).index(selected["source_type"]),
                         format_func=lambda key: SOURCE_TYPES[key],
                     )
-                    source_url = st.text_input("URL / индекс устройства", value=selected["source_url"])
+                    source_url_label = "URL / индекс устройства" if source_type != "browser_camera" else "Идентификатор источника"
+                    source_url = st.text_input(source_url_label, value=selected["source_url"])
                     location = st.text_input("Локация", value=selected.get("location") or "")
                     description = st.text_area("Описание", value=selected.get("description") or "")
                     save = st.form_submit_button("Сохранить изменения")
