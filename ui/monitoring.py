@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import time
 from datetime import datetime
@@ -37,9 +38,72 @@ except Exception:
 
 RTC_CONFIG = RTCConfiguration(build_rtc_configuration()) if WEBRTC_AVAILABLE and build_rtc_configuration() else None
 
+CAMERA_BACKEND_OPTIONS = [
+    ("auto", None, "Автовыбор"),
+    ("avfoundation", getattr(cv2, "CAP_AVFOUNDATION", None), "AVFoundation"),
+    ("any", getattr(cv2, "CAP_ANY", None), "CAP_ANY"),
+]
+
 
 def _safe_stream_key(value: str) -> str:
     return "".join(char if char.isalnum() else "_" for char in value).strip("_") or "browser_camera"
+
+
+def _available_camera_backends():
+    return [(key, api, label) for key, api, label in CAMERA_BACKEND_OPTIONS if api is not None or key == "auto"]
+
+
+def _open_camera_capture(camera_index: int, backend_key: str = "auto"):
+    candidates = _available_camera_backends()
+    if backend_key != "auto":
+        candidates = [row for row in candidates if row[0] == backend_key] or candidates
+    tried = []
+    for key, api, label in candidates:
+        try:
+            cap = cv2.VideoCapture(int(camera_index)) if api is None else cv2.VideoCapture(int(camera_index), api)
+        except Exception as exc:
+            tried.append(f"{label}: exception {type(exc).__name__}")
+            continue
+        if not cap.isOpened():
+            cap.release()
+            tried.append(f"{label}: open_failed")
+            continue
+        ret, _ = cap.read()
+        if ret:
+            return cap, {"backend_key": key, "backend_label": label, "attempts": tried}
+        cap.release()
+        tried.append(f"{label}: no_frames")
+    return None, {"backend_key": backend_key, "backend_label": "—", "attempts": tried}
+
+
+def _probe_camera_backends(camera_index: int) -> list[dict]:
+    rows = []
+    for key, api, label in _available_camera_backends():
+        try:
+            cap = cv2.VideoCapture(int(camera_index)) if api is None else cv2.VideoCapture(int(camera_index), api)
+            opened = cap.isOpened()
+            got_frame = False
+            if opened:
+                got_frame, _ = cap.read()
+            cap.release()
+            rows.append(
+                {
+                    "backend": label,
+                    "opened": "да" if opened else "нет",
+                    "frame": "да" if got_frame else "нет",
+                    "status": "ok" if opened and got_frame else "failed",
+                }
+            )
+        except Exception as exc:
+            rows.append(
+                {
+                    "backend": label,
+                    "opened": "ошибка",
+                    "frame": "ошибка",
+                    "status": f"{type(exc).__name__}: {exc}",
+                }
+            )
+    return rows
 
 
 def render_online_monitoring(
@@ -663,14 +727,25 @@ def _render_local_camera_monitor(
 ):
     """Continuous local-device monitoring for MacBook internal camera and other local webcams."""
     camera_index = 0
+    backend_key = "auto"
     if not standalone_mode:
-        camera_index = st.number_input(
-            "Индекс локальной камеры",
-            min_value=0,
-            step=1,
-            value=0,
-            key="live_local_camera_index",
-        )
+        setup_col1, setup_col2 = st.columns(2)
+        with setup_col1:
+            camera_index = st.number_input(
+                "Индекс локальной камеры",
+                min_value=0,
+                step=1,
+                value=0,
+                key="live_local_camera_index",
+            )
+        with setup_col2:
+            backend_labels = {key: label for key, _api, label in _available_camera_backends()}
+            backend_key = st.selectbox(
+                "Backend захвата",
+                options=list(backend_labels.keys()),
+                format_func=lambda key: backend_labels[key],
+                key="live_local_camera_backend",
+            )
     if "local_camera_running" not in session_state:
         session_state.local_camera_running = False
 
@@ -684,16 +759,25 @@ def _render_local_camera_monitor(
         with control_col2:
             if st.button("Остановить локальную камеру", key="live_local_camera_stop"):
                 session_state.local_camera_running = False
+        with st.expander("Диагностика локальной камеры", expanded=False):
+            st.dataframe(pd.DataFrame(_probe_camera_backends(int(camera_index))), use_container_width=True, hide_index=True)
 
     if not session_state.local_camera_running:
         st.info("Запустите локальную камеру для непрерывного мониторинга.")
         return session_state.get("local_camera_last_frame_at")
 
-    cap = cv2.VideoCapture(int(camera_index))
-    if not cap.isOpened():
-        st.error("Не удалось открыть встроенную камеру устройства через OpenCV.")
+    cap, backend_meta = _open_camera_capture(int(camera_index), backend_key=backend_key)
+    if cap is None:
+        attempt_text = ", ".join(backend_meta.get("attempts") or []) or "нет подробностей"
+        st.error(
+            "Не удалось открыть встроенную камеру устройства через OpenCV. "
+            f"Попытки: {attempt_text}"
+        )
         session_state.local_camera_running = False
         return session_state.get("local_camera_last_frame_at")
+    session_state.local_camera_backend = backend_meta.get("backend_label")
+    if not standalone_mode:
+        st.caption(f"Активный backend захвата: {backend_meta.get('backend_label')}")
 
     frame_display = st.empty()
     start_session(
@@ -1070,21 +1154,134 @@ def _render_browser_camera_monitor(
     db_upsert_session,
     standalone_mode: bool = False,
 ):
-    """Render browser camera only as a real live mode via WebRTC."""
+    """Render browser camera via all realistic methods available in the current environment."""
+    methods = ["WebRTC live", "Browser snapshot", "Диагностика"]
+    if not standalone_mode:
+        method = st.radio(
+            "Метод браузерной камеры",
+            options=methods,
+            horizontal=True,
+            key=f"browser_camera_method_{_safe_stream_key(source_label)}",
+        )
+    else:
+        method = "WebRTC live"
+
+    if method == "Browser snapshot":
+        shot = st.camera_input("Кадр из браузерной камеры", key=f"browser_camera_snapshot_{_safe_stream_key(source_label)}")
+        if shot is None:
+            st.info("Разреши доступ к камере в браузере и сделай кадр для проверки этого метода.")
+            return session_state.get("browser_camera_last_frame_at")
+        start_session(
+            session_state,
+            db_upsert_session,
+            model_name=model_name,
+            source_type="webcam_browser",
+            source_path="browser_camera_snapshot",
+            animal_filter="всё",
+            track_classes=["person"],
+            rotation_angle=0,
+        )
+        image = Image.open(shot).convert("RGB")
+        frame_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        frame_display = st.empty()
+        _process_single_frame(
+            st=st,
+            frame_bgr=frame_bgr,
+            frame_index=0,
+            source_type="webcam_browser",
+            use_tracking=False,
+            frame_display=frame_display,
+            model=model,
+            class_meta=class_meta,
+            inference_size=inference_size,
+            conf_threshold=conf_threshold,
+            session_state=session_state,
+            db_insert_frame=db_insert_frame,
+            db_upsert_session=db_upsert_session,
+            rotation_angle=0,
+            register_event_pipeline=lambda **kwargs: register_detection_and_entry_events(
+                session_state,
+                db_insert_event,
+                session=kwargs["session"],
+                frame_index=kwargs["frame_index"],
+                detection=kwargs["detection"],
+                source_type=kwargs["source_type"],
+                settings={
+                    "rule_count_enabled": False,
+                    "rule_class": "person",
+                    "rule_n": 3,
+                    "rule_t": 10,
+                    "rule_disappear_enabled": True,
+                    "rule_disappear_seconds": 5,
+                    "enable_notifications": False,
+                    "notify_conf_threshold": conf_threshold,
+                    "notify_classes": ["person"],
+                    "enable_roi": True,
+                    "default_access_point_id": None,
+                    "prolonged_presence_seconds": 10,
+                    "event_cooldown": 5,
+                },
+                notify_callback=lambda _text: add_notification(session_state, _text, enabled=False, toast_callback=None),
+            ),
+            process_disappeared=lambda **kwargs: process_disappeared_tracks(
+                session_state,
+                db_insert_event,
+                session=kwargs["session"],
+                frame_index=kwargs["frame_index"],
+                source_type=kwargs["source_type"],
+                frame_width=kwargs["frame_width"],
+                frame_height=kwargs["frame_height"],
+                rule_disappear_enabled=True,
+                rule_disappear_seconds=5,
+                enable_notifications=False,
+                notify_callback=lambda _text: None,
+                default_access_point_id=None,
+            ),
+            draw_now=True,
+        )
+        session_state.browser_camera_last_frame_at = time.time()
+        finish_session(session_state, db_upsert_session)
+        return session_state.get("browser_camera_last_frame_at")
+
+    if method == "Диагностика":
+        st.warning(
+            "Ниже показана реальная диагностика окружения. Если WebRTC недоступен, браузерный live-поток "
+            "в этом окружении не заработает без установки зависимостей и корректного HTTPS/TURN."
+        )
+        diag_rows = [
+            {"Проверка": "Python executable", "Статус": sys.executable},
+            {"Проверка": "OpenCV", "Статус": cv2.__version__},
+            {"Проверка": "PyAV", "Статус": "ok" if av is not None else "missing"},
+            {"Проверка": "streamlit-webrtc", "Статус": "ok" if webrtc_streamer is not None else "missing"},
+            {"Проверка": "RTC config", "Статус": "configured" if RTC_CONFIG is not None else "empty"},
+            {"Проверка": "Browser snapshot", "Статус": "available"},
+        ]
+        st.dataframe(pd.DataFrame(diag_rows), use_container_width=True, hide_index=True)
+        st.caption(
+            "Для локального all-time мониторинга на MacBook используй «Локальная камера MacBook». "
+            "Для браузерного live здесь нужен рабочий `streamlit-webrtc` + `av`."
+        )
+        return session_state.get("browser_camera_last_frame_at")
+
     if not WEBRTC_AVAILABLE:
         st.error(
-            "Browser live camera недоступна: в текущем окружении не установлен streamlit-webrtc/av. "
-            "Для этого режима нужен Python 3.11 и рабочее WebRTC-окружение."
+            "WebRTC live недоступен: в текущем окружении отсутствуют `streamlit-webrtc` и/или `av`. "
+            "Ниже доступен browser snapshot, а для непрерывного потока используй локальную OpenCV-камеру."
         )
         st.caption(
-            "Используйте локальную OpenCV камеру для локального запуска или production-источник RTSP/USB/HLS."
+            "Техническая причина подтверждена диагностикой окружения: browser live не может стартовать без этих модулей."
         )
+        shot = st.camera_input("Fallback: снимок из браузерной камеры", key=f"browser_camera_fallback_{_safe_stream_key(source_label)}")
+        if shot is not None:
+            image = Image.open(shot).convert("RGB")
+            st.image(image, caption="Получен кадр из браузерной камеры", use_container_width=True)
+            session_state.browser_camera_last_frame_at = time.time()
         return session_state.get("browser_camera_last_frame_at")
 
     if not standalone_mode:
         st.caption(
-            "Браузерная камера работает только как непрерывный live mode через WebRTC. "
-            "Если соединение не устанавливается, проверьте HTTPS, TURN и сетевое окружение."
+            "Браузерная камера работает как непрерывный live mode через WebRTC. "
+            "Если соединение не устанавливается, проверь HTTPS, TURN и сетевое окружение."
         )
 
     def _video_frame_callback(frame):
