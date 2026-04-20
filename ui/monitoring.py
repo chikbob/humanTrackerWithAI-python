@@ -126,6 +126,11 @@ def _read_camera_frame(cap, *, max_retries: int = 3):
     return False, None, max_retries
 
 
+def _detect_alt_webrtc_runtime() -> str:
+    alt_runtime = Path(".venv311/bin/python")
+    return str(alt_runtime) if alt_runtime.exists() else ""
+
+
 def render_online_monitoring(
     st,
     *,
@@ -208,7 +213,7 @@ def render_online_monitoring(
         with control_col4:
             session_state.monitoring_embed_secondary_live = st.toggle(
                 "Встроить доп. live",
-                value=bool(session_state.get("monitoring_embed_secondary_live", False)),
+                value=bool(session_state.get("monitoring_embed_secondary_live", True)),
                 help="Дополнительные browser/local источники будут открываться как встроенные standalone-view. Это тяжелее по ресурсам, но позволяет видеть несколько интерактивных камер сразу.",
             )
         selected_bindings = _prioritize_primary_binding(selected_bindings, primary_binding)
@@ -348,8 +353,8 @@ def render_online_monitoring(
                     _render_source_status_badge(
                         title=binding["name"],
                         source_type=binding["kind_label"],
-                        status=card.get("status") or binding["status"].get("status", "offline"),
-                        fps=card.get("fps"),
+                        status=_resolve_binding_status(binding, session_state, source_card=card),
+                        fps=_resolve_binding_fps(binding, session_state, source_card=card),
                         last_frame_at=_fmt_ts(_resolve_binding_last_frame_at(binding, session_state)),
                         recent_event_count=card.get("recent_event_count", 0),
                         error_text=card.get("last_error") or "",
@@ -457,6 +462,24 @@ def _resolve_binding_last_frame_at(binding: dict, session_state):
     if binding["kind"] == "browser_camera":
         return session_state.get("browser_camera_last_frame_at")
     return binding.get("status", {}).get("last_frame_at")
+
+
+def _resolve_binding_status(binding: dict, session_state, *, source_card: dict | None = None) -> str:
+    source_card = source_card or {}
+    if binding["kind"] == "local_camera":
+        return "live" if session_state.get("local_camera_last_frame_at") else "ready"
+    if binding["kind"] == "browser_camera":
+        return "live" if session_state.get("browser_camera_last_frame_at") else "ready"
+    return source_card.get("status") or binding.get("status", {}).get("status", "offline")
+
+
+def _resolve_binding_fps(binding: dict, session_state, *, source_card: dict | None = None):
+    source_card = source_card or {}
+    if binding["kind"] == "local_camera":
+        return round(session_state.get("local_camera_fps") or 0.0, 2)
+    if binding["kind"] == "browser_camera":
+        return "—"
+    return source_card.get("fps")
 
 
 def _max_rendered_sources(layout_mode: str) -> int:
@@ -580,7 +603,7 @@ def _render_source_tile(
 ):
     with st.container(border=True):
         badge = "Главный источник" if is_primary else "Дополнительный источник"
-        source_status = source_card.get("status") or binding.get("status", {}).get("status", "offline")
+        source_status = _resolve_binding_status(binding, session_state, source_card=source_card)
         st.markdown(
             f"""
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px;">
@@ -607,20 +630,13 @@ def _render_source_tile(
 
         if not is_primary:
             if embed_secondary_live:
-                st.caption(
-                    "Дополнительный интерактивный источник открыт как встроенный live-view. "
-                    "Если это одна и та же физическая камера, возможен конфликт доступа."
-                )
                 _render_embedded_live_source(st, binding)
                 st.markdown(
                     f'<a href="{_build_live_window_url(binding, overlay_enabled=False)}" target="_blank" rel="noopener noreferrer">Открыть этот источник в чистом окне</a>',
                     unsafe_allow_html=True,
                 )
             else:
-                st.info(
-                    "Дополнительные browser/local источники можно встроить через переключатель «Встроить доп. live» "
-                    "или открыть отдельно."
-                )
+                _render_embedded_live_source(st, binding)
             return
 
         if binding["kind"] == "browser_camera":
@@ -1400,6 +1416,7 @@ def _render_browser_camera_monitor(
         return session_state.get("browser_camera_last_frame_at")
 
     if method == "Диагностика":
+        alt_runtime = _detect_alt_webrtc_runtime()
         st.warning(
             "Ниже показана реальная диагностика окружения. Если WebRTC недоступен, браузерный live-поток "
             "в этом окружении не заработает без установки зависимостей и корректного HTTPS/TURN."
@@ -1411,6 +1428,7 @@ def _render_browser_camera_monitor(
             {"Проверка": "streamlit-webrtc", "Статус": "ok" if webrtc_streamer is not None else "missing"},
             {"Проверка": "RTC config", "Статус": "configured" if RTC_CONFIG is not None else "empty"},
             {"Проверка": "Browser snapshot", "Статус": "available"},
+            {"Проверка": "Alt WebRTC runtime", "Статус": alt_runtime or "not_found"},
         ]
         st.dataframe(pd.DataFrame(diag_rows), use_container_width=True, hide_index=True)
         st.caption(
@@ -1420,14 +1438,17 @@ def _render_browser_camera_monitor(
         return session_state.get("browser_camera_last_frame_at")
 
     if not WEBRTC_AVAILABLE:
+        alt_runtime = _detect_alt_webrtc_runtime()
         st.error(
             "WebRTC live недоступен: в текущем окружении отсутствуют `streamlit-webrtc` и/или `av`. "
             "Ниже доступен browser snapshot, а для непрерывного потока используй локальную OpenCV-камеру."
         )
         st.caption(
             "Техническая причина подтверждена диагностикой окружения: browser live не может стартовать без этих модулей. "
-            "Для полноценного browser live используй `.venv311` и `scripts/run_ui_py311.sh`."
+            f"Для полноценного browser live используй `.venv311` и `scripts/run_ui_py311.sh`."
         )
+        if alt_runtime:
+            st.info(f"Обнаружен готовый runtime с WebRTC: `{alt_runtime}`")
         shot = st.camera_input("Fallback: снимок из браузерной камеры", key=f"browser_camera_fallback_{_safe_stream_key(source_label)}")
         if shot is not None:
             image = Image.open(shot).convert("RGB")
