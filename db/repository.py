@@ -96,7 +96,14 @@ def init_db():
             center_y REAL,
             frame_width INTEGER,
             frame_height INTEGER,
-            message TEXT
+            message TEXT,
+            event_scope TEXT DEFAULT 'raw',
+            access_log_id INTEGER NULL,
+            employee_id INTEGER NULL,
+            access_point_id INTEGER NULL,
+            identified_employee_id INTEGER NULL,
+            identification_confidence REAL,
+            identification_status TEXT DEFAULT 'not_configured'
         )
         """
     )
@@ -158,6 +165,9 @@ def init_db():
             frame_width INTEGER,
             frame_height INTEGER,
             message TEXT,
+            identified_employee_id INTEGER NULL,
+            identification_confidence REAL,
+            identification_status TEXT DEFAULT 'not_configured',
             FOREIGN KEY (access_log_id) REFERENCES access_logs(id),
             FOREIGN KEY (employee_id) REFERENCES employees(id),
             FOREIGN KEY (access_point_id) REFERENCES access_points(id)
@@ -174,6 +184,9 @@ def init_db():
             ("access_log_id", "access_log_id INTEGER NULL"),
             ("employee_id", "employee_id INTEGER NULL"),
             ("access_point_id", "access_point_id INTEGER NULL"),
+            ("identified_employee_id", "identified_employee_id INTEGER NULL"),
+            ("identification_confidence", "identification_confidence REAL"),
+            ("identification_status", "identification_status TEXT DEFAULT 'not_configured'"),
         ],
     )
     _ensure_columns(
@@ -229,6 +242,9 @@ def init_db():
             ("frame_width", "frame_width INTEGER"),
             ("frame_height", "frame_height INTEGER"),
             ("message", "message TEXT"),
+            ("identified_employee_id", "identified_employee_id INTEGER NULL"),
+            ("identification_confidence", "identification_confidence REAL"),
+            ("identification_status", "identification_status TEXT DEFAULT 'not_configured'"),
         ],
     )
     conn.commit()
@@ -337,8 +353,9 @@ def db_insert_event(event: dict):
             event_id, session_id, event_type, source_type, frame_index, timestamp,
             class_name, confidence, track_id, animal_group, is_animal, roi_inside,
             center_x, center_y, frame_width, frame_height, message, event_scope,
-            access_log_id, employee_id, access_point_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            access_log_id, employee_id, access_point_id, identified_employee_id,
+            identification_confidence, identification_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event["event_id"],
@@ -362,6 +379,9 @@ def db_insert_event(event: dict):
             access_log_id,
             event.get("employee_id"),
             event.get("access_point_id"),
+            event.get("identified_employee_id"),
+            event.get("identification_confidence"),
+            event.get("identification_status", "not_configured"),
         ),
     )
     # Raw telemetry stays in detection_events, while domain events are linked via access_logs.
@@ -371,8 +391,9 @@ def db_insert_event(event: dict):
             INSERT OR REPLACE INTO detection_events (
                 id, session_id, access_log_id, employee_id, access_point_id, event_type,
                 source_type, frame_index, timestamp, class_name, confidence, track_id,
-                roi_inside, center_x, center_y, frame_width, frame_height, message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                roi_inside, center_x, center_y, frame_width, frame_height, message,
+                identified_employee_id, identification_confidence, identification_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event["event_id"],
@@ -393,6 +414,9 @@ def db_insert_event(event: dict):
                 event.get("frame_width"),
                 event.get("frame_height"),
                 event.get("message"),
+                event.get("identified_employee_id"),
+                event.get("identification_confidence"),
+                event.get("identification_status", "not_configured"),
             ),
         )
     conn.commit()
@@ -484,6 +508,9 @@ def load_history_from_db():
                 "access_log_id": row["access_log_id"] if "access_log_id" in row.keys() else None,
                 "employee_id": row["employee_id"] if "employee_id" in row.keys() else None,
                 "access_point_id": row["access_point_id"] if "access_point_id" in row.keys() else None,
+                "identified_employee_id": row["identified_employee_id"] if "identified_employee_id" in row.keys() else None,
+                "identification_confidence": row["identification_confidence"] if "identification_confidence" in row.keys() else None,
+                "identification_status": row["identification_status"] if "identification_status" in row.keys() else "not_configured",
             }
         )
 

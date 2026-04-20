@@ -2,6 +2,8 @@ import time
 import uuid
 from typing import Optional
 
+from services.identity_service import get_identity_placeholder_result
+
 
 def add_notification(session_state, text: str, *, enabled: bool, toast_callback=None):
     session_state.notifications.append({"timestamp": time.time(), "text": text})
@@ -34,8 +36,12 @@ def create_persisted_event(
     employee_id: Optional[int] = None,
     access_point_id: Optional[int] = None,
     access_log_id: Optional[int] = None,
+    identified_employee_id: Optional[int] = None,
+    identification_confidence: Optional[float] = None,
+    identification_status: Optional[str] = None,
 ):
     """Persist either a raw CV event or a domain event into the unified event journal."""
+    identity_result = get_identity_placeholder_result()
     event = {
         "event_id": str(uuid.uuid4())[:8],
         "session_id": session["id"],
@@ -58,7 +64,24 @@ def create_persisted_event(
         "employee_id": employee_id,
         "access_point_id": access_point_id,
         "access_log_id": access_log_id,
+        # These fields prepare the journal for future employee identification.
+        "identified_employee_id": identified_employee_id,
     }
+    event["identified_employee_id"] = (
+        identified_employee_id
+        if identified_employee_id is not None
+        else identity_result["identified_employee_id"]
+    )
+    event["identification_confidence"] = (
+        identification_confidence
+        if identification_confidence is not None
+        else identity_result["identification_confidence"]
+    )
+    event["identification_status"] = (
+        identification_status
+        if identification_status is not None
+        else identity_result["identification_status"]
+    )
     session_state.events.append(event)
     session["events_count"] += 1
     db_insert_event(event)
