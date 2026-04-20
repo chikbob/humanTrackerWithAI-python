@@ -1,4 +1,19 @@
 services:
+  coturn:
+    image: coturn/coturn:4.6.2
+    command:
+      - -c
+      - /etc/coturn/turnserver.conf
+      - --user=${TURN_USERNAME:-enterprise-turn}:${TURN_PASSWORD:-enterprise-turn-password}
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "5349:5349"
+      - "5349:5349/udp"
+    volumes:
+      - ./deploy/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    restart: unless-stopped
+
   ui:
     build: .
     command: streamlit run app.py --server.address=0.0.0.0 --server.port=8501
@@ -7,13 +22,15 @@ services:
     environment:
       MONITORING_DB_PATH: /app/data/monitoring.db
       STUN_URLS: ${STUN_URLS:-stun:stun.l.google.com:19302}
-      TURN_URLS: ${TURN_URLS:-}
-      TURN_USERNAME: ${TURN_USERNAME:-}
-      TURN_PASSWORD: ${TURN_PASSWORD:-}
+      TURN_URLS: ${TURN_URLS:-turn:coturn:3478?transport=udp,turn:coturn:3478?transport=tcp}
+      TURN_USERNAME: ${TURN_USERNAME:-enterprise-turn}
+      TURN_PASSWORD: ${TURN_PASSWORD:-enterprise-turn-password}
     volumes:
       - app_data:/app/data
       - app_runtime:/app/runtime_data
     restart: unless-stopped
+    depends_on:
+      - coturn
 
   worker:
     build: .
@@ -21,13 +38,15 @@ services:
     environment:
       MONITORING_DB_PATH: /app/data/monitoring.db
       STUN_URLS: ${STUN_URLS:-stun:stun.l.google.com:19302}
-      TURN_URLS: ${TURN_URLS:-}
-      TURN_USERNAME: ${TURN_USERNAME:-}
-      TURN_PASSWORD: ${TURN_PASSWORD:-}
+      TURN_URLS: ${TURN_URLS:-turn:coturn:3478?transport=udp,turn:coturn:3478?transport=tcp}
+      TURN_USERNAME: ${TURN_USERNAME:-enterprise-turn}
+      TURN_PASSWORD: ${TURN_PASSWORD:-enterprise-turn-password}
     volumes:
       - app_data:/app/data
       - app_runtime:/app/runtime_data
     restart: unless-stopped
+    depends_on:
+      - coturn
 
 volumes:
   app_data:

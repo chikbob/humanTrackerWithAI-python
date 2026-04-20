@@ -186,6 +186,7 @@ docker compose down
 
 ### Состав сервисов
 
+- `coturn` — TURN/STUN relay для browser live monitoring;
 - `ui` — Streamlit-интерфейс;
 - `worker` — фоновый процесс обработки production-источников;
 - общий volume `app_data` для `SQLite` и runtime-данных.
@@ -207,16 +208,25 @@ docker compose down
 - `TURN_USERNAME`
 - `TURN_PASSWORD`
 
-Пример:
+Пример `.env`:
 
 ```bash
-export STUN_URLS=stun:stun.l.google.com:19302
-export TURN_URLS=turn:turn.example.com:3478
-export TURN_USERNAME=my_turn_user
-export TURN_PASSWORD=my_turn_password
+cp .env.example .env
 ```
 
-На удаленном сервере без `TURN` browser live может не установить соединение. Это следует из рекомендаций `streamlit-webrtc` для remote deployment. Источник: https://github.com/whitphx/streamlit-webrtc
+Если проект запускается через `docker compose`, то `coturn` поднимается вместе с приложением и значения по умолчанию уже прокинуты в `ui` и `worker`.
+
+### Реально рабочий browser live для production
+
+Рекомендуемый сценарий:
+
+1. Использовать `Python 3.11`.
+2. Поднять проект через `docker compose`.
+3. Завести `HTTPS` через reverse proxy.
+4. Использовать встроенный `coturn` или внешний TURN-сервер.
+5. Открывать `?view=live-window&source=browser_camera` в отдельном окне.
+
+Это самый практичный путь для Streamlit-приложения, если нужно непрерывное браузерное live-наблюдение. Без `TURN` browser live на удаленном сервере может не устанавливать медиасессию. Источник: https://github.com/whitphx/streamlit-webrtc
 
 ## Как работает 24/7 режим
 

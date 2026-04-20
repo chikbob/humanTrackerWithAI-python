@@ -48,6 +48,34 @@ def main():
     query_params = st.query_params
     standalone_live_mode = query_params.get("view", "") == "live-window"
     preferred_live_source = query_params.get("source", "")
+    if standalone_live_mode:
+        st.markdown(
+            """
+            <style>
+                header[data-testid="stHeader"],
+                [data-testid="stToolbar"],
+                [data-testid="stSidebar"],
+                [data-testid="stDecoration"],
+                #MainMenu,
+                footer {
+                    display: none !important;
+                }
+                .block-container {
+                    max-width: 100vw !important;
+                    padding: 0 !important;
+                    margin: 0 !important;
+                }
+                .stApp,
+                [data-testid="stAppViewContainer"],
+                [data-testid="stMainBlockContainer"] {
+                    background: #000 !important;
+                    padding: 0 !important;
+                    margin: 0 !important;
+                }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
     system_settings = load_system_settings()
     video_sources = load_video_sources()
@@ -57,8 +85,6 @@ def main():
             "demo_mode": False,
             "model_name": system_settings.get("model_name", "yolov8s.pt"),
         }
-        st.markdown("### Отдельное окно live monitoring")
-        st.caption("Окно сфокусировано только на live-потоке и панели состояния.")
     else:
         sidebar_state = render_app_sidebar(st, video_sources=video_sources, system_settings=system_settings)
         if sidebar_state["demo_mode"]:

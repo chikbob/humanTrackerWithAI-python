@@ -37,6 +37,10 @@ except Exception:
 RTC_CONFIG = RTCConfiguration(build_rtc_configuration()) if WEBRTC_AVAILABLE and build_rtc_configuration() else None
 
 
+def _safe_stream_key(value: str) -> str:
+    return "".join(char if char.isalnum() else "_" for char in value).strip("_") or "browser_camera"
+
+
 def render_online_monitoring(
     st,
     *,
@@ -87,6 +91,26 @@ def render_online_monitoring(
     selected_source = selected_binding["source"]
     selected_status = statuses_by_id.get(selected_source["id"], {}) if selected_source else {}
     selected_last_frame_at = selected_status.get("last_frame_at")
+
+    if standalone_mode:
+        _render_standalone_live_window(
+            st,
+            selected_binding=selected_binding,
+            selected_source=selected_source,
+            selected_status=selected_status,
+            selected_last_frame_at=selected_last_frame_at,
+            model_name=model_name,
+            model=model,
+            class_meta=class_meta,
+            inference_size=inference_size,
+            conf_threshold=conf_threshold,
+            access_point_name=access_point_name,
+            session_state=session_state,
+            db_insert_event=db_insert_event,
+            db_insert_frame=db_insert_frame,
+            db_upsert_session=db_upsert_session,
+        )
+        return
 
     left_col, right_col = st.columns([1.9, 1.0], gap="large")
 
@@ -186,6 +210,92 @@ def render_online_monitoring(
                 db_insert_frame=db_insert_frame,
                 db_upsert_session=db_upsert_session,
             )
+
+
+def _render_standalone_live_window(
+    st,
+    *,
+    selected_binding: dict,
+    selected_source,
+    selected_status: dict,
+    selected_last_frame_at,
+    model_name: str,
+    model,
+    class_meta: dict,
+    inference_size: int,
+    conf_threshold: float,
+    access_point_name: str,
+    session_state,
+    db_insert_event,
+    db_insert_frame,
+    db_upsert_session,
+):
+    st.markdown(
+        """
+        <style>
+            .standalone-live-shell {
+                width: 100vw;
+                height: 100vh;
+                overflow: hidden;
+                background: #000;
+            }
+            .standalone-live-shell video {
+                width: 100vw !important;
+                height: 100vh !important;
+                object-fit: cover !important;
+                background: #000 !important;
+            }
+            .standalone-overlay {
+                position: fixed;
+                top: 18px;
+                left: 18px;
+                z-index: 50;
+                color: #fff;
+                background: rgba(0, 0, 0, 0.45);
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                border-radius: 14px;
+                padding: 10px 14px;
+                backdrop-filter: blur(8px);
+                font-size: 14px;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    source_name = selected_source["name"] if selected_source is not None else "Браузерная камера"
+    st.markdown(
+        f"""
+        <div class="standalone-overlay">
+            <div><strong>{source_name}</strong></div>
+            <div>Точка доступа: {access_point_name}</div>
+            <div>Последний кадр: {_fmt_ts(selected_last_frame_at)}</div>
+        </div>
+        <div class="standalone-live-shell">
+        """,
+        unsafe_allow_html=True,
+    )
+    if selected_binding["kind"] == "production" and selected_source is not None:
+        snapshot_path = selected_status.get("last_snapshot_path")
+        if snapshot_path and Path(snapshot_path).exists():
+            st.image(snapshot_path, use_container_width=True)
+        else:
+            st.warning("Для production-источника пока нет актуального snapshot от worker.")
+    else:
+        _render_browser_camera_monitor(
+            st,
+            source_label=selected_source["name"] if selected_source is not None else "Браузерная камера",
+            model_name=model_name,
+            model=model,
+            class_meta=class_meta,
+            inference_size=inference_size,
+            conf_threshold=conf_threshold,
+            session_state=session_state,
+            db_insert_event=db_insert_event,
+            db_insert_frame=db_insert_frame,
+            db_upsert_session=db_upsert_session,
+            standalone_mode=True,
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _render_demo_workspace(
@@ -460,24 +570,29 @@ def _render_browser_camera_monitor(
     db_insert_event,
     db_insert_frame,
     db_upsert_session,
+    standalone_mode: bool = False,
 ):
     """Render a browser camera workflow with dedicated live mode and fallback snapshot mode."""
     browser_modes = ["Live tracking", "Совместимый snapshot"]
     if not WEBRTC_AVAILABLE:
         browser_modes = ["Совместимый snapshot"]
 
-    browser_mode = st.radio(
-        "Режим браузерной камеры",
-        options=browser_modes,
-        horizontal=True,
-        key=f"browser_camera_mode_{source_label}",
-    )
+    if standalone_mode:
+        browser_mode = "Live tracking" if WEBRTC_AVAILABLE else "Совместимый snapshot"
+    else:
+        browser_mode = st.radio(
+            "Режим браузерной камеры",
+            options=browser_modes,
+            horizontal=True,
+            key=f"browser_camera_mode_{_safe_stream_key(source_label)}",
+        )
 
     if browser_mode == "Live tracking" and WEBRTC_AVAILABLE:
-        st.caption(
-            "Отдельное окно live monitoring может работать непрерывно и визуально сопровождать всех людей в кадре. "
-            "Для удаленного сервера рекомендуется настроить TURN."
-        )
+        if not standalone_mode:
+            st.caption(
+                "Отдельное окно live monitoring может работать непрерывно и визуально сопровождать всех людей в кадре. "
+                "Для удаленного сервера рекомендуется настроить TURN."
+            )
 
         def _video_frame_callback(frame):
             frame_bgr = frame.to_ndarray(format="bgr24")
@@ -497,7 +612,7 @@ def _render_browser_camera_monitor(
             return av.VideoFrame.from_ndarray(cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR), format="bgr24")
 
         webrtc_streamer(
-            key=f"browser_camera_stream_{source_label}",
+            key=f"browser_camera_stream_{_safe_stream_key(source_label)}",
             mode=WebRtcMode.SENDRECV,
             rtc_configuration=RTC_CONFIG,
             media_stream_constraints={"video": True, "audio": False},
@@ -506,12 +621,12 @@ def _render_browser_camera_monitor(
         )
         return session_state.get("browser_camera_last_frame_at")
 
-    if WEBRTC_AVAILABLE:
+    if WEBRTC_AVAILABLE and not standalone_mode:
         st.info(
             "Совместимый snapshot работает стабильнее, но не является непрерывным live-потоком. "
             "Для отдельного окна и непрерывного трекинга используйте режим Live tracking."
         )
-    else:
+    elif not WEBRTC_AVAILABLE:
         st.warning(
             "В текущем окружении не установлен streamlit-webrtc, поэтому непрерывный browser live недоступен. "
             "Сейчас доступен только совместимый snapshot-режим."
