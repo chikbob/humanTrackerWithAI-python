@@ -1,7 +1,9 @@
 import json
 import os
+import random
 import sqlite3
 import time
+import uuid
 
 from config.app_config import SYSTEM_SETTING_DEFAULTS
 
@@ -957,3 +959,418 @@ def upsert_worker_status(
     )
     conn.commit()
     conn.close()
+
+
+def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 900, seed: int = 42):
+    """Recreate the database contents with a large deterministic enterprise demo dataset."""
+    conn = get_db_conn()
+    rng = random.Random(seed)
+    now_ts = time.time()
+
+    for table_name in [
+        "worker_status",
+        "detection_events",
+        "access_logs",
+        "events",
+        "frames",
+        "sessions",
+        "video_sources",
+        "employees",
+        "access_points",
+        "system_settings",
+    ]:
+        conn.execute(f"DELETE FROM {table_name}")
+    conn.execute(
+        "DELETE FROM sqlite_sequence WHERE name IN ('employees', 'access_points', 'access_logs', 'frames', 'video_sources')"
+    )
+
+    for key, value in SYSTEM_SETTING_DEFAULTS.items():
+        conn.execute(
+            """
+            INSERT INTO system_settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            """,
+            (key, value, now_ts),
+        )
+
+    access_points = [
+        ("Главная проходная", "Центральный вход", "Основная точка прохода сотрудников"),
+        ("Административный вход", "Корпус A", "Поток административного персонала"),
+        ("Служебный вход", "Производственный блок", "Служебный доступ дежурных смен"),
+        ("Складской вход", "Логистическая зона", "Контроль прохода в складской сектор"),
+    ]
+    access_point_ids = []
+    for row in access_points:
+        cursor = conn.execute(
+            "INSERT INTO access_points (name, location, description) VALUES (?, ?, ?)",
+            row,
+        )
+        access_point_ids.append(cursor.lastrowid)
+
+    conn.execute(
+        """
+        UPDATE system_settings
+        SET value = ?, updated_at = ?
+        WHERE key = 'active_access_point_id'
+        """,
+        (str(access_point_ids[0]), now_ts),
+    )
+
+    last_names = [
+        "Иванов",
+        "Петров",
+        "Сидоров",
+        "Кузнецов",
+        "Смирнов",
+        "Волков",
+        "Морозов",
+        "Соколов",
+        "Новиков",
+        "Егоров",
+        "Орлов",
+        "Федоров",
+    ]
+    first_names = [
+        "Иван",
+        "Петр",
+        "Алексей",
+        "Дмитрий",
+        "Андрей",
+        "Сергей",
+        "Анна",
+        "Елена",
+        "Мария",
+        "Ольга",
+        "Наталья",
+        "Татьяна",
+    ]
+    patronymics = [
+        "Иванович",
+        "Петрович",
+        "Сергеевич",
+        "Алексеевич",
+        "Андреевич",
+        "Дмитриевич",
+        "Ивановна",
+        "Петровна",
+        "Сергеевна",
+        "Алексеевна",
+        "Андреевна",
+        "Дмитриевна",
+    ]
+    departments = [
+        "Служба безопасности",
+        "ИТ-служба",
+        "Администрация",
+        "Производство",
+        "Логистика",
+        "Служба эксплуатации",
+        "Отдел кадров",
+    ]
+    positions = [
+        "Инженер",
+        "Оператор",
+        "Старший смены",
+        "Специалист",
+        "Менеджер",
+        "Системный администратор",
+        "Контролер доступа",
+    ]
+    employee_statuses = ["active", "active", "active", "inactive", "on_leave", "blocked"]
+    employee_ids = []
+    for index in range(employee_count):
+        full_name = (
+            f"{last_names[index % len(last_names)]} "
+            f"{first_names[(index * 3) % len(first_names)]} "
+            f"{patronymics[(index * 5) % len(patronymics)]}"
+        )
+        cursor = conn.execute(
+            """
+            INSERT INTO employees (full_name, department, position, status, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                full_name,
+                departments[index % len(departments)],
+                positions[index % len(positions)],
+                employee_statuses[index % len(employee_statuses)],
+                now_ts - rng.randint(10, 180) * 86400,
+            ),
+        )
+        employee_ids.append(cursor.lastrowid)
+
+    video_sources = [
+        ("Камера центрального входа", "rtsp", "rtsp://demo-main", "Центральный вход", 1, now_ts - 25, "Основной производственный поток"),
+        ("Камера административного входа", "rtsp", "rtsp://demo-admin", "Корпус A", 1, now_ts - 70, "Вторичный поток доступа"),
+        ("USB пост охраны", "usb_camera", "0", "Пост охраны", 0, now_ts - 3600, "Локальная камера сервера"),
+        ("Браузер оператора", "browser_camera", "browser_camera", "АРМ оператора", 0, None, "Клиентский поток оператора"),
+    ]
+    source_ids = []
+    for source_row in video_sources:
+        cursor = conn.execute(
+            """
+            INSERT INTO video_sources (name, source_type, source_url, location, is_active, last_seen, description, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (*source_row, now_ts - rng.randint(1, 15) * 86400),
+        )
+        source_ids.append(cursor.lastrowid)
+
+    worker_rows = [
+        (source_ids[0], "online", 1, now_ts - 5, now_ts - 8, 12.8, 1, "", "", now_ts),
+        (source_ids[1], "online", 1, now_ts - 18, now_ts - 24, 9.6, 3, "", "", now_ts),
+        (source_ids[2], "offline", 0, now_ts - 640, now_ts - 710, 0.0, 7, "Источник временно недоступен", "", now_ts),
+        (source_ids[3], "standby", 0, None, None, 0.0, 0, "", "", now_ts),
+    ]
+    conn.executemany(
+        """
+        INSERT INTO worker_status (
+            source_id, status, is_connected, last_heartbeat, last_frame_at, fps,
+            reconnect_count, last_error, last_snapshot_path, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        worker_rows,
+    )
+
+    session_ids = []
+    for source_id in source_ids[:2]:
+        for day_offset in range(14):
+            started_at = now_ts - day_offset * 86400 - rng.randint(600, 36000)
+            session_id = f"worker-{source_id}-{uuid.uuid4().hex[:8]}"
+            session_ids.append((session_id, source_id, started_at))
+            conn.execute(
+                """
+                INSERT INTO sessions (
+                    id, model, source_type, source_path, animal_filter, class_filter,
+                    rotation_angle, started_at, finished_at, total_frames, processed_frames, events_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    "yolov8s.pt",
+                    "rtsp",
+                    f"rtsp://source-{source_id}",
+                    "всё",
+                    json.dumps(["person"], ensure_ascii=False),
+                    0,
+                    started_at,
+                    started_at + rng.randint(1800, 14400),
+                    rng.randint(800, 3000),
+                    rng.randint(700, 2800),
+                    rng.randint(40, 220),
+                ),
+            )
+
+    suspicious_types = ["prolonged_presence_near_entry", "unknown_person_detected", "repeated_entry_attempt"]
+    raw_types = ["object_detected", "roi_enter", "roi_exit", "object_disappeared"]
+    domain_types = [
+        "person_detected_near_entry",
+        "person_entered_entry_zone",
+        "person_left_entry_zone",
+    ]
+
+    for visit_index in range(visit_count):
+        session_id, source_id, started_at = session_ids[visit_index % len(session_ids)]
+        event_ts = started_at + rng.randint(30, 7200)
+        employee_id = employee_ids[visit_index % len(employee_ids)] if rng.random() > 0.18 else None
+        access_point_id = access_point_ids[source_id % len(access_point_ids)]
+        confidence = round(rng.uniform(0.72, 0.98), 3)
+        base_track = visit_index % 300 + 1
+
+        access_cursor = conn.execute(
+            """
+            INSERT INTO access_logs (employee_id, timestamp, access_point_id, event_type, confidence, note)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                employee_id,
+                event_ts,
+                access_point_id,
+                "person_entered_entry_zone",
+                confidence,
+                "Синтетическая демонстрационная запись прохода",
+            ),
+        )
+        access_log_id = access_cursor.lastrowid
+
+        domain_events = [
+            ("person_detected_near_entry", event_ts - 3, "Человек обнаружен рядом со входной зоной"),
+            ("person_entered_entry_zone", event_ts, "Зафиксирован вход в зону прохода"),
+            ("person_left_entry_zone", event_ts + rng.randint(8, 35), "Человек покинул входную зону"),
+        ]
+        if rng.random() < 0.12:
+            domain_events.append(
+                (
+                    suspicious_types[visit_index % len(suspicious_types)],
+                    event_ts + rng.randint(4, 45),
+                    "Зафиксировано подозрительное поведение в зоне прохода",
+                )
+            )
+
+        for event_type, timestamp_value, message in domain_events:
+            event_id = uuid.uuid4().hex[:8]
+            conn.execute(
+                """
+                INSERT INTO events (
+                    event_id, session_id, event_type, source_type, frame_index, timestamp,
+                    class_name, confidence, track_id, animal_group, is_animal, roi_inside,
+                    center_x, center_y, frame_width, frame_height, message, event_scope,
+                    access_log_id, employee_id, access_point_id, identified_employee_id,
+                    identification_confidence, identification_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    session_id,
+                    event_type,
+                    "rtsp",
+                    visit_index % 500,
+                    timestamp_value,
+                    "person",
+                    confidence,
+                    str(base_track),
+                    None,
+                    0,
+                    1,
+                    rng.uniform(100, 580),
+                    rng.uniform(80, 380),
+                    640,
+                    480,
+                    message,
+                    "domain",
+                    access_log_id,
+                    employee_id,
+                    access_point_id,
+                    employee_id if employee_id and rng.random() > 0.25 else None,
+                    round(rng.uniform(0.66, 0.95), 3) if employee_id else None,
+                    "matched" if employee_id and rng.random() > 0.25 else "not_configured",
+                ),
+            )
+
+        for raw_index in range(2):
+            event_id = uuid.uuid4().hex[:8]
+            raw_type = raw_types[(visit_index + raw_index) % len(raw_types)]
+            raw_ts = event_ts - 5 + raw_index * 4
+            raw_row = (
+                event_id,
+                session_id,
+                None,
+                employee_id,
+                access_point_id,
+                raw_type,
+                "rtsp",
+                visit_index % 500,
+                raw_ts,
+                "person",
+                confidence,
+                str(base_track),
+                1,
+                rng.uniform(100, 580),
+                rng.uniform(80, 380),
+                640,
+                480,
+                "Синтетическая raw-телеметрия детекции",
+                employee_id if employee_id and rng.random() > 0.45 else None,
+                round(rng.uniform(0.55, 0.93), 3) if employee_id else None,
+                "matched" if employee_id and rng.random() > 0.45 else "not_configured",
+            )
+            conn.execute(
+                """
+                INSERT INTO detection_events (
+                    id, session_id, access_log_id, employee_id, access_point_id, event_type,
+                    source_type, frame_index, timestamp, class_name, confidence, track_id,
+                    roi_inside, center_x, center_y, frame_width, frame_height, message,
+                    identified_employee_id, identification_confidence, identification_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                raw_row,
+            )
+            conn.execute(
+                """
+                INSERT INTO events (
+                    event_id, session_id, event_type, source_type, frame_index, timestamp,
+                    class_name, confidence, track_id, animal_group, is_animal, roi_inside,
+                    center_x, center_y, frame_width, frame_height, message, event_scope,
+                    access_log_id, employee_id, access_point_id, identified_employee_id,
+                    identification_confidence, identification_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    session_id,
+                    raw_type,
+                    "rtsp",
+                    visit_index % 500,
+                    raw_ts,
+                    "person",
+                    confidence,
+                    str(base_track),
+                    None,
+                    0,
+                    1,
+                    raw_row[13],
+                    raw_row[14],
+                    640,
+                    480,
+                    raw_row[17],
+                    "raw",
+                    None,
+                    employee_id,
+                    access_point_id,
+                    raw_row[18],
+                    raw_row[19],
+                    raw_row[20],
+                ),
+            )
+
+    for offline_index in range(24):
+        event_id = uuid.uuid4().hex[:8]
+        timestamp_value = now_ts - offline_index * 21600
+        session_id, _, _ = session_ids[offline_index % len(session_ids)]
+        conn.execute(
+            """
+            INSERT INTO events (
+                event_id, session_id, event_type, source_type, frame_index, timestamp,
+                class_name, confidence, track_id, animal_group, is_animal, roi_inside,
+                center_x, center_y, frame_width, frame_height, message, event_scope,
+                access_log_id, employee_id, access_point_id, identified_employee_id,
+                identification_confidence, identification_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                session_id,
+                "stream_offline" if offline_index % 2 == 0 else "camera_reconnected",
+                "rtsp",
+                0,
+                timestamp_value,
+                "camera",
+                0.0 if offline_index % 2 == 0 else 1.0,
+                None,
+                None,
+                0,
+                0,
+                None,
+                None,
+                640,
+                480,
+                "Синтетическое служебное событие состояния потока",
+                "domain",
+                None,
+                None,
+                access_point_ids[offline_index % len(access_point_ids)],
+                None,
+                None,
+                "not_configured",
+            ),
+        )
+
+    conn.commit()
+    conn.close()
+    return {
+        "employees": employee_count,
+        "access_points": len(access_points),
+        "video_sources": len(video_sources),
+        "visits": visit_count,
+        "sessions": len(session_ids),
+    }

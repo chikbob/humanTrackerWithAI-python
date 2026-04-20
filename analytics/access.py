@@ -113,3 +113,25 @@ def build_offline_source_summary(events: list[dict]) -> pd.DataFrame:
     counter = Counter(event.get("source_name") or "не указан" for event in events if event.get("event_type") == "stream_offline")
     rows = [{"source_name": source_name, "offline_events": count} for source_name, count in counter.items()]
     return pd.DataFrame(rows)
+
+
+def build_source_status_rows(sources: list[dict], statuses: list[dict]) -> list[dict]:
+    statuses_by_id = {status["source_id"]: status for status in statuses}
+    rows = []
+    for source in sources:
+        status = statuses_by_id.get(source["id"], {})
+        rows.append(
+            {
+                "source_id": source["id"],
+                "Источник": source["name"],
+                "Тип": source["source_type"],
+                "Активен": "да" if source.get("is_active") else "нет",
+                "Статус": status.get("status", "idle"),
+                "Соединение": "online" if status.get("is_connected") else "offline",
+                "FPS": round(status.get("fps") or 0.0, 2),
+                "Heartbeat": datetime.fromtimestamp(status["last_heartbeat"]).strftime("%H:%M:%S")
+                if status.get("last_heartbeat")
+                else "—",
+            }
+        )
+    return rows

@@ -213,3 +213,68 @@ def detect_and_draw_live(
 
     frame_rgb = draw_roi_overlay(frame_rgb, roi_config)
     return frame_rgb
+
+
+def track_and_draw_live(
+    frame_bgr,
+    *,
+    model,
+    conf_threshold: float,
+    inference_size: int,
+    class_meta: dict,
+    animal_filter: str,
+    animal_classes: dict,
+    track_classes: list[str],
+    roi_config: dict,
+    draw_box_fn,
+):
+    """Low-risk visual tracking for browser live monitoring without DB side effects."""
+    try:
+        results = model.track(
+            frame_bgr,
+            imgsz=inference_size,
+            conf=conf_threshold,
+            iou=0.5,
+            persist=True,
+            tracker="bytetrack.yaml",
+            verbose=False,
+        )
+    except ModuleNotFoundError:
+        return detect_and_draw_live(
+            frame_bgr,
+            model=model,
+            conf_threshold=conf_threshold,
+            inference_size=inference_size,
+            class_meta=class_meta,
+            animal_filter=animal_filter,
+            animal_classes=animal_classes,
+            track_classes=track_classes,
+            roi_config=roi_config,
+            draw_box_fn=draw_box_fn,
+        )
+
+    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    frame_h, frame_w, _ = frame_rgb.shape
+    for result in results:
+        boxes = result.boxes
+        ids = boxes.id.cpu().numpy() if boxes.id is not None else None
+        xyxy = boxes.xyxy.cpu().numpy()
+        cls_arr = boxes.cls.cpu().numpy()
+        conf_arr = boxes.conf.cpu().numpy()
+        for index, box in enumerate(xyxy):
+            cls_id = int(cls_arr[index])
+            cls_name = model.names[cls_id]
+            conf = float(conf_arr[index])
+            x1, y1, x2, y2 = map(int, box)
+            cx = (x1 + x2) / 2.0
+            cy = (y1 + y2) / 2.0
+            if not class_allowed(cls_name, animal_filter, animal_classes, track_classes):
+                continue
+            if roi_config["enable_roi"] and not is_inside_roi(cx, cy, frame_w, frame_h, roi_config):
+                continue
+            track_id = int(ids[index]) if ids is not None else None
+            label = f"{cls_name} id:{track_id}" if track_id is not None else cls_name
+            frame_rgb = draw_box_fn(frame_rgb, box, label, conf)
+
+    frame_rgb = draw_roi_overlay(frame_rgb, roi_config)
+    return frame_rgb

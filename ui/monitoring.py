@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from core.detection import detect_and_draw_live
+from core.detection import track_and_draw_live
 from services.events import add_notification, process_disappeared_tracks, register_detection_and_entry_events
 from services.state import finish_session, get_current_session, log_frame, start_session
 from ui.sidebar import ANIMAL_CLASSES
@@ -58,6 +58,8 @@ def render_online_monitoring(
     db_insert_frame,
     db_upsert_session,
     demo_mode: bool,
+    preferred_source: str = "",
+    standalone_mode: bool = False,
 ):
     statuses_by_id = {status["source_id"]: status for status in worker_statuses}
     source_options = []
@@ -67,13 +69,21 @@ def render_online_monitoring(
         source_options.append(label)
         source_kind = "browser_camera" if source["source_type"] == "browser_camera" else "production"
         source_map[label] = {"kind": source_kind, "source": source}
-    browser_option = "Браузерная камера [demo/fallback]"
-    source_options.append(browser_option)
-    source_map[browser_option] = {"kind": "browser_camera", "source": None}
+    browser_option = "Браузерная камера"
+    if browser_option not in source_options:
+        source_options.append(browser_option)
+        source_map[browser_option] = {"kind": "browser_camera", "source": None}
+    if not source_options:
+        source_options = [browser_option]
+        source_map[browser_option] = {"kind": "browser_camera", "source": None}
 
+    default_index = 0
+    if preferred_source == "browser_camera" and browser_option in source_options:
+        default_index = source_options.index(browser_option)
     selected_option = st.selectbox(
         "Источник live monitoring",
         options=source_options,
+        index=default_index,
         help="Можно переключаться между активным production-источником и браузерной камерой.",
     )
     selected_binding = source_map[selected_option]
@@ -86,6 +96,12 @@ def render_online_monitoring(
     with left_col:
         with st.container(border=True):
             st.subheader("Live monitoring")
+            if not standalone_mode:
+                live_window_url = f"?view=live-window&source={'browser_camera' if selected_binding['kind'] == 'browser_camera' else 'production'}"
+                st.markdown(
+                    f'<a href="{live_window_url}" target="_blank" rel="noopener noreferrer">Открыть live monitoring в отдельном окне</a>',
+                    unsafe_allow_html=True,
+                )
             if selected_binding["kind"] == "production" and selected_source is not None:
                 snapshot_path = selected_status.get("last_snapshot_path")
                 if snapshot_path and Path(snapshot_path).exists():
@@ -138,8 +154,10 @@ def render_online_monitoring(
     with right_col:
         with st.container(border=True):
             st.subheader("Панель состояния")
-            status_fps = round(selected_status.get("fps") or 0.0, 2) if selected_binding["kind"] == "production" else "browser"
+            status_fps = round(selected_status.get("fps") or 0.0, 2) if selected_binding["kind"] == "production" else "—"
             st.metric("FPS", status_fps)
+            stream_mode_label = "Server pipeline" if selected_binding["kind"] == "production" else "Browser live"
+            st.metric("Режим потока", stream_mode_label)
             st.metric("confidence threshold", round(conf_threshold, 2))
             if selected_binding["kind"] == "production" and selected_source is not None:
                 source_name = selected_source["name"]
@@ -152,24 +170,25 @@ def render_online_monitoring(
             if selected_status.get("last_error"):
                 st.error(selected_status["last_error"])
 
-    with st.expander("Демо и fallback режимы", expanded=demo_mode):
-        st.caption(
-            "Этот блок сохраняет демонстрационные сценарии: загрузку видеофайла, снимка, браузерную камеру "
-            "и локальную камеру. Основной production-путь должен использовать серверный источник и фоновый worker."
-        )
-        _render_demo_workspace(
-            st,
-            model_name=model_name,
-            model=model,
-            class_meta=class_meta,
-            inference_size=inference_size,
-            conf_threshold=conf_threshold,
-            frame_skip=frame_skip,
-            session_state=session_state,
-            db_insert_event=db_insert_event,
-            db_insert_frame=db_insert_frame,
-            db_upsert_session=db_upsert_session,
-        )
+    if not standalone_mode:
+        with st.expander("Демо и fallback режимы", expanded=demo_mode):
+            st.caption(
+                "Этот блок сохраняет демонстрационные сценарии: загрузку видеофайла, снимка, браузерную камеру "
+                "и локальную камеру. Основной production-путь должен использовать серверный источник и фоновый worker."
+            )
+            _render_demo_workspace(
+                st,
+                model_name=model_name,
+                model=model,
+                class_meta=class_meta,
+                inference_size=inference_size,
+                conf_threshold=conf_threshold,
+                frame_skip=frame_skip,
+                session_state=session_state,
+                db_insert_event=db_insert_event,
+                db_insert_frame=db_insert_frame,
+                db_upsert_session=db_upsert_session,
+            )
 
 
 def _render_demo_workspace(
@@ -445,10 +464,10 @@ def _render_browser_camera_monitor(
     db_insert_frame,
     db_upsert_session,
 ):
-    """Render a browser camera workflow with a stable default and optional WebRTC mode."""
-    browser_modes = ["Совместимый режим", "WebRTC live"]
+    """Render a browser camera workflow with dedicated live mode and fallback snapshot mode."""
+    browser_modes = ["Live tracking", "Совместимый snapshot"]
     if not WEBRTC_AVAILABLE:
-        browser_modes = ["Совместимый режим"]
+        browser_modes = ["Совместимый snapshot"]
 
     browser_mode = st.radio(
         "Режим браузерной камеры",
@@ -457,12 +476,12 @@ def _render_browser_camera_monitor(
         key=f"browser_camera_mode_{source_label}",
     )
 
-    if browser_mode == "WebRTC live" and WEBRTC_AVAILABLE:
-        st.caption("Нажмите Start в виджете ниже и разрешите браузеру доступ к камере.")
+    if browser_mode == "Live tracking" and WEBRTC_AVAILABLE:
+        st.caption("Отдельное окно live monitoring может работать непрерывно и визуально сопровождать всех людей в кадре.")
 
         def _video_frame_callback(frame):
             frame_bgr = frame.to_ndarray(format="bgr24")
-            frame_rgb = detect_and_draw_live(
+            frame_rgb = track_and_draw_live(
                 frame_bgr,
                 model=model,
                 conf_threshold=conf_threshold,
@@ -489,11 +508,14 @@ def _render_browser_camera_monitor(
 
     if WEBRTC_AVAILABLE:
         st.info(
-            "Совместимый режим использует встроенную браузерную камеру Streamlit и работает стабильнее "
-            "на Streamlit Community Cloud и в ограниченных сетях."
+            "Совместимый snapshot работает стабильнее, но не является непрерывным live-потоком. "
+            "Для отдельного окна и непрерывного трекинга используйте режим Live tracking."
         )
     else:
-        st.warning("Для live-stream браузерной камеры требуется streamlit-webrtc. Пока доступен режим снимка.")
+        st.warning(
+            "В текущем окружении не установлен streamlit-webrtc, поэтому непрерывный browser live недоступен. "
+            "Сейчас доступен только совместимый snapshot-режим."
+        )
     shot = st.camera_input("Кадр из браузерной камеры", key="live_monitor_browser_camera")
     if shot is None:
         st.info("Разрешите доступ к камере в браузере и сделайте кадр для анализа входной зоны.")

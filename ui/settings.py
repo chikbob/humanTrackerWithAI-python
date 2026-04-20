@@ -6,7 +6,14 @@ from config.app_config import DEFAULT_MODEL_NAME
 from ui.sidebar import MODEL_OPTIONS
 
 
-def render_system_settings(st, *, settings: dict, access_points: list[dict], set_system_setting_fn):
+def render_system_settings(
+    st,
+    *,
+    settings: dict,
+    access_points: list[dict],
+    set_system_setting_fn,
+    reset_and_seed_demo_data_fn,
+):
     st.subheader("Настройки системы")
     point_options = {point["name"]: point["id"] for point in access_points}
     default_point_name = next(
@@ -90,3 +97,32 @@ def render_system_settings(st, *, settings: dict, access_points: list[dict], set
         "Параметры применяются к фоновому worker и production-режиму. "
         "При изменении критичных настроек источников рекомендуется перезапустить worker."
     )
+    with st.container(border=True):
+        st.subheader("Сервисные операции с БД")
+        st.caption(
+            "Полная очистка базы предназначена для демонстрационного или production-bootstrap сценария. "
+            "Операция удаляет текущие записи и создает новый массив предметных данных."
+        )
+        seed_col1, seed_col2, seed_col3 = st.columns(3)
+        with seed_col1:
+            employee_count = st.number_input("Сотрудников", min_value=20, max_value=500, value=120, step=10)
+        with seed_col2:
+            visit_count = st.number_input("Цепочек проходов", min_value=100, max_value=5000, value=900, step=100)
+        with seed_col3:
+            random_seed = st.number_input("Seed", min_value=1, max_value=99999, value=42, step=1)
+        confirm_reset = st.checkbox("Подтверждаю полную очистку и пересоздание данных")
+        if st.button("Очистить БД и заполнить демонстрационными данными", type="primary"):
+            if not confirm_reset:
+                st.error("Подтвердите операцию очистки базы.")
+            else:
+                result = reset_and_seed_demo_data_fn(
+                    employee_count=int(employee_count),
+                    visit_count=int(visit_count),
+                    seed=int(random_seed),
+                )
+                st.success(
+                    "База данных пересоздана: "
+                    f"{result['employees']} сотрудников, {result['video_sources']} источника, "
+                    f"{result['visits']} цепочек проходов."
+                )
+                st.rerun()

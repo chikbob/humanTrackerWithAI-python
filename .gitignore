@@ -11,6 +11,7 @@ venv/
 
 # Local runtime data
 monitoring.db
+*.db-journal
 runtime_data/
 logs/
 
