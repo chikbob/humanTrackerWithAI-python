@@ -18,6 +18,29 @@ def get_db_conn():
     return conn
 
 
+def _table_exists(conn, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _get_table_columns(conn, table_name: str) -> set[str]:
+    if not _table_exists(conn, table_name):
+        return set()
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {row["name"] for row in rows}
+
+
+def _ensure_columns(conn, table_name: str, columns: list[tuple[str, str]]):
+    existing_columns = _get_table_columns(conn, table_name)
+    for column_name, column_sql in columns:
+        if column_name in existing_columns:
+            continue
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_sql}")
+
+
 def init_db():
     conn = get_db_conn()
     cur = conn.cursor()
@@ -76,6 +99,127 @@ def init_db():
             message TEXT
         )
         """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS employees (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name TEXT NOT NULL,
+            department TEXT,
+            position TEXT,
+            status TEXT,
+            created_at REAL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS access_points (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            location TEXT,
+            description TEXT
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS access_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_id INTEGER NULL,
+            timestamp REAL NOT NULL,
+            access_point_id INTEGER,
+            event_type TEXT,
+            confidence REAL,
+            note TEXT,
+            FOREIGN KEY (employee_id) REFERENCES employees(id),
+            FOREIGN KEY (access_point_id) REFERENCES access_points(id)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS detection_events (
+            id TEXT PRIMARY KEY,
+            session_id TEXT,
+            access_log_id INTEGER NULL,
+            employee_id INTEGER NULL,
+            access_point_id INTEGER NULL,
+            event_type TEXT,
+            source_type TEXT,
+            frame_index INTEGER,
+            timestamp REAL,
+            class_name TEXT,
+            confidence REAL,
+            track_id TEXT,
+            roi_inside INTEGER,
+            center_x REAL,
+            center_y REAL,
+            frame_width INTEGER,
+            frame_height INTEGER,
+            message TEXT,
+            FOREIGN KEY (access_log_id) REFERENCES access_logs(id),
+            FOREIGN KEY (employee_id) REFERENCES employees(id),
+            FOREIGN KEY (access_point_id) REFERENCES access_points(id)
+        )
+        """
+    )
+
+    # Migration-safe column checks for databases created by older app versions.
+    _ensure_columns(
+        conn,
+        "employees",
+        [
+            ("full_name", "full_name TEXT NOT NULL DEFAULT ''"),
+            ("department", "department TEXT"),
+            ("position", "position TEXT"),
+            ("status", "status TEXT"),
+            ("created_at", "created_at REAL"),
+        ],
+    )
+    _ensure_columns(
+        conn,
+        "access_points",
+        [
+            ("name", "name TEXT NOT NULL DEFAULT ''"),
+            ("location", "location TEXT"),
+            ("description", "description TEXT"),
+        ],
+    )
+    _ensure_columns(
+        conn,
+        "access_logs",
+        [
+            ("employee_id", "employee_id INTEGER NULL"),
+            ("timestamp", "timestamp REAL"),
+            ("access_point_id", "access_point_id INTEGER"),
+            ("event_type", "event_type TEXT"),
+            ("confidence", "confidence REAL"),
+            ("note", "note TEXT"),
+        ],
+    )
+    _ensure_columns(
+        conn,
+        "detection_events",
+        [
+            ("session_id", "session_id TEXT"),
+            ("access_log_id", "access_log_id INTEGER NULL"),
+            ("employee_id", "employee_id INTEGER NULL"),
+            ("access_point_id", "access_point_id INTEGER NULL"),
+            ("event_type", "event_type TEXT"),
+            ("source_type", "source_type TEXT"),
+            ("frame_index", "frame_index INTEGER"),
+            ("timestamp", "timestamp REAL"),
+            ("class_name", "class_name TEXT"),
+            ("confidence", "confidence REAL"),
+            ("track_id", "track_id TEXT"),
+            ("roi_inside", "roi_inside INTEGER"),
+            ("center_x", "center_x REAL"),
+            ("center_y", "center_y REAL"),
+            ("frame_width", "frame_width INTEGER"),
+            ("frame_height", "frame_height INTEGER"),
+            ("message", "message TEXT"),
+        ],
     )
     conn.commit()
     conn.close()
@@ -167,6 +311,36 @@ def db_insert_event(event: dict):
             str(event.get("track_id")) if event.get("track_id") is not None else None,
             event.get("animal_group"),
             1 if event.get("is_animal") else 0,
+            1 if event.get("roi_inside") else 0,
+            event.get("center_x"),
+            event.get("center_y"),
+            event.get("frame_width"),
+            event.get("frame_height"),
+            event.get("message"),
+        ),
+    )
+    # Mirror low-level detection records into the enterprise domain table.
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO detection_events (
+            id, session_id, access_log_id, employee_id, access_point_id, event_type,
+            source_type, frame_index, timestamp, class_name, confidence, track_id,
+            roi_inside, center_x, center_y, frame_width, frame_height, message
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event["event_id"],
+            event["session_id"],
+            event.get("access_log_id"),
+            event.get("employee_id"),
+            event.get("access_point_id"),
+            event.get("event_type", "object_detected"),
+            event["source_type"],
+            event["frame_index"],
+            event["timestamp"],
+            event.get("class_name"),
+            event.get("confidence"),
+            str(event.get("track_id")) if event.get("track_id") is not None else None,
             1 if event.get("roi_inside") else 0,
             event.get("center_x"),
             event.get("center_y"),
