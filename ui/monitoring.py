@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
+from config.rtc_config import build_rtc_configuration
 from core.detection import track_and_draw_live
 from services.events import add_notification, process_disappeared_tracks, register_detection_and_entry_events
 from services.state import finish_session, get_current_session, log_frame, start_session
@@ -33,11 +34,7 @@ except Exception:
     WEBRTC_AVAILABLE = False
 
 
-RTC_CONFIG = (
-    RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
-    if WEBRTC_AVAILABLE
-    else None
-)
+RTC_CONFIG = RTCConfiguration(build_rtc_configuration()) if WEBRTC_AVAILABLE and build_rtc_configuration() else None
 
 
 def render_online_monitoring(
@@ -477,7 +474,10 @@ def _render_browser_camera_monitor(
     )
 
     if browser_mode == "Live tracking" and WEBRTC_AVAILABLE:
-        st.caption("Отдельное окно live monitoring может работать непрерывно и визуально сопровождать всех людей в кадре.")
+        st.caption(
+            "Отдельное окно live monitoring может работать непрерывно и визуально сопровождать всех людей в кадре. "
+            "Для удаленного сервера рекомендуется настроить TURN."
+        )
 
         def _video_frame_callback(frame):
             frame_bgr = frame.to_ndarray(format="bgr24")

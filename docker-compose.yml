@@ -6,6 +6,10 @@ services:
       - "8501:8501"
     environment:
       MONITORING_DB_PATH: /app/data/monitoring.db
+      STUN_URLS: ${STUN_URLS:-stun:stun.l.google.com:19302}
+      TURN_URLS: ${TURN_URLS:-}
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_PASSWORD: ${TURN_PASSWORD:-}
     volumes:
       - app_data:/app/data
       - app_runtime:/app/runtime_data
@@ -16,6 +20,10 @@ services:
     command: python run_worker.py
     environment:
       MONITORING_DB_PATH: /app/data/monitoring.db
+      STUN_URLS: ${STUN_URLS:-stun:stun.l.google.com:19302}
+      TURN_URLS: ${TURN_URLS:-}
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_PASSWORD: ${TURN_PASSWORD:-}
     volumes:
       - app_data:/app/data
       - app_runtime:/app/runtime_data

@@ -18,6 +18,7 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 ENV STREAMLIT_SERVER_HEADLESS=true
 ENV MONITORING_DB_PATH=/app/data/monitoring.db
+ENV STUN_URLS=stun:stun.l.google.com:19302
 
 RUN mkdir -p /app/data /app/runtime_data
 

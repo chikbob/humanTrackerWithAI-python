@@ -190,6 +190,34 @@ docker compose down
 - `worker` — фоновый процесс обработки production-источников;
 - общий volume `app_data` для `SQLite` и runtime-данных.
 
+### Browser live в отдельном окне
+
+Для отдельного окна browser live monitoring нужен runtime с `Python 3.11` и установленным `streamlit-webrtc`.
+Практически это означает:
+
+- локально лучше запускать новый `venv` на `Python 3.11`;
+- на VPS и в Docker использовать базовый образ `python:3.11`;
+- для удаленного сервера нужен `HTTPS`;
+- для стабильного WebRTC через интернет желательно настроить `TURN`.
+
+Используемые переменные окружения:
+
+- `STUN_URLS`
+- `TURN_URLS`
+- `TURN_USERNAME`
+- `TURN_PASSWORD`
+
+Пример:
+
+```bash
+export STUN_URLS=stun:stun.l.google.com:19302
+export TURN_URLS=turn:turn.example.com:3478
+export TURN_USERNAME=my_turn_user
+export TURN_PASSWORD=my_turn_password
+```
+
+На удаленном сервере без `TURN` browser live может не установить соединение. Это следует из рекомендаций `streamlit-webrtc` для remote deployment. Источник: https://github.com/whitphx/streamlit-webrtc
+
 ## Как работает 24/7 режим
 
 - `worker` циклически опрашивает активные источники из таблицы `video_sources`;
