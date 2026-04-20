@@ -9,7 +9,7 @@ from PIL import Image
 
 from core.detection import build_class_meta, detect_and_annotate, detect_and_draw_live, load_model
 from db.repository import db_insert_event, db_insert_frame, db_upsert_session, init_db, load_history_from_db
-from services.events import add_notification, process_disappeared_tracks, register_detection_event
+from services.events import add_notification, process_disappeared_tracks, register_detection_and_entry_events
 from services.state import finish_session, get_current_session, init_session_state, log_frame, start_session
 from ui.analytics import render_analytics, render_status_panel
 from ui.page import configure_page
@@ -67,6 +67,9 @@ def main():
         "notify_conf_threshold": notify_conf_threshold,
         "notify_classes": secondary_config["notify_classes"],
         "enable_roi": roi_config["enable_roi"],
+        # ROI in this project is interpreted as the enterprise entry zone.
+        "default_access_point_id": None,
+        "prolonged_presence_seconds": 10,
     }
 
     def notify(text: str):
@@ -77,8 +80,9 @@ def main():
             toast_callback=st.toast,
         )
 
-    def register_event(*, frame_index: int, detection: dict, source_type: str, session: dict):
-        register_detection_event(
+    def register_event_pipeline(*, frame_index: int, detection: dict, source_type: str, session: dict):
+        # Split CV telemetry from domain events of the entry-zone monitoring model.
+        register_detection_and_entry_events(
             st.session_state,
             db_insert_event,
             session=session,
@@ -102,6 +106,7 @@ def main():
             rule_disappear_seconds=event_settings["rule_disappear_seconds"],
             enable_notifications=enable_notifications,
             notify_callback=notify,
+            default_access_point_id=event_settings["default_access_point_id"],
         )
 
     st.markdown("---")
@@ -145,7 +150,7 @@ def main():
                         track_classes=track_classes,
                         roi_config=roi_config,
                         event_settings=event_settings,
-                        register_event_fn=register_event,
+                        register_event_fn=register_event_pipeline,
                         process_disappeared_fn=process_disappeared,
                         draw_box_fn=draw_fancy_box,
                         warning_callback=st.warning,
@@ -209,7 +214,7 @@ def main():
                             track_classes=track_classes,
                             roi_config=roi_config,
                             event_settings=event_settings,
-                            register_event_fn=register_event,
+                            register_event_fn=register_event_pipeline,
                             process_disappeared_fn=process_disappeared,
                             draw_box_fn=draw_fancy_box,
                             warning_callback=st.warning,
@@ -336,7 +341,7 @@ def main():
                             track_classes=track_classes,
                             roi_config=roi_config,
                             event_settings=event_settings,
-                            register_event_fn=register_event,
+                            register_event_fn=register_event_pipeline,
                             process_disappeared_fn=process_disappeared,
                             draw_box_fn=draw_fancy_box,
                             warning_callback=st.warning,
@@ -407,7 +412,7 @@ def main():
                                     track_classes=track_classes,
                                     roi_config=roi_config,
                                     event_settings=event_settings,
-                                    register_event_fn=register_event,
+                                    register_event_fn=register_event_pipeline,
                                     process_disappeared_fn=process_disappeared,
                                     draw_box_fn=draw_fancy_box,
                                     warning_callback=st.warning,

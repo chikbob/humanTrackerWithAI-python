@@ -24,6 +24,10 @@ def ensure_runtime_state(session: dict):
         session["class_event_times"] = {}
     if "rule_last_alert_ts" not in session or not isinstance(session["rule_last_alert_ts"], dict):
         session["rule_last_alert_ts"] = {}
+    if "track_first_seen" not in session or not isinstance(session["track_first_seen"], dict):
+        session["track_first_seen"] = {}
+    if "track_domain_flags" not in session or not isinstance(session["track_domain_flags"], dict):
+        session["track_domain_flags"] = {}
 
 
 def init_session_state(session_state, load_history_from_db):
@@ -90,6 +94,8 @@ def start_session(
         "disappeared_track_keys": set(),
         "class_event_times": {},
         "rule_last_alert_ts": {},
+        "track_first_seen": {},
+        "track_domain_flags": {},
         "frames": [],
     }
     session_state.current_session_id = session_id

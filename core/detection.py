@@ -129,6 +129,7 @@ def detect_and_annotate(
             track_key = f"{session['id']}:{track_id}:{cls_name}" if (session and track_id is not None) else None
             prev_inside = session["track_inside_roi"].get(track_key, False) if track_key else False
             roi_enter = bool(roi_inside and (not prev_inside))
+            roi_exit = bool((not roi_inside) and prev_inside)
             if track_key and session is not None:
                 session["track_inside_roi"][track_key] = roi_inside
                 session["track_last_seen"][track_key] = time.time()
@@ -150,6 +151,7 @@ def detect_and_annotate(
                 "frame_height": frame_h,
                 "roi_inside": roi_inside,
                 "roi_enter": roi_enter if track_id is not None else roi_inside,
+                "roi_exit": roi_exit if track_id is not None else False,
             }
             detections_meta.append(detection)
 

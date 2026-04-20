@@ -168,6 +168,16 @@ def init_db():
     # Migration-safe column checks for databases created by older app versions.
     _ensure_columns(
         conn,
+        "events",
+        [
+            ("event_scope", "event_scope TEXT DEFAULT 'raw'"),
+            ("access_log_id", "access_log_id INTEGER NULL"),
+            ("employee_id", "employee_id INTEGER NULL"),
+            ("access_point_id", "access_point_id INTEGER NULL"),
+        ],
+    )
+    _ensure_columns(
+        conn,
         "employees",
         [
             ("full_name", "full_name TEXT NOT NULL DEFAULT ''"),
@@ -291,13 +301,44 @@ def db_insert_frame(session_id: str, frame_record: dict):
 
 def db_insert_event(event: dict):
     conn = get_db_conn()
+    event_scope = event.get("event_scope", "raw")
+    access_log_id = event.get("access_log_id")
+
+    # Reuse existing domain log linkage when the same event_id is rewritten.
+    if access_log_id is None:
+        existing_row = conn.execute(
+            "SELECT access_log_id FROM events WHERE event_id = ?",
+            (event["event_id"],),
+        ).fetchone()
+        if existing_row is not None:
+            access_log_id = existing_row["access_log_id"]
+
+    if event_scope == "domain" and access_log_id is None:
+        cursor = conn.execute(
+            """
+            INSERT INTO access_logs (
+                employee_id, timestamp, access_point_id, event_type, confidence, note
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.get("employee_id"),
+                event["timestamp"],
+                event.get("access_point_id"),
+                event.get("event_type"),
+                event.get("confidence"),
+                event.get("message") or event.get("note"),
+            ),
+        )
+        access_log_id = cursor.lastrowid
+
     conn.execute(
         """
         INSERT OR REPLACE INTO events (
             event_id, session_id, event_type, source_type, frame_index, timestamp,
             class_name, confidence, track_id, animal_group, is_animal, roi_inside,
-            center_x, center_y, frame_width, frame_height, message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            center_x, center_y, frame_width, frame_height, message, event_scope,
+            access_log_id, employee_id, access_point_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event["event_id"],
@@ -317,38 +358,43 @@ def db_insert_event(event: dict):
             event.get("frame_width"),
             event.get("frame_height"),
             event.get("message"),
-        ),
-    )
-    # Mirror low-level detection records into the enterprise domain table.
-    conn.execute(
-        """
-        INSERT OR REPLACE INTO detection_events (
-            id, session_id, access_log_id, employee_id, access_point_id, event_type,
-            source_type, frame_index, timestamp, class_name, confidence, track_id,
-            roi_inside, center_x, center_y, frame_width, frame_height, message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            event["event_id"],
-            event["session_id"],
-            event.get("access_log_id"),
+            event_scope,
+            access_log_id,
             event.get("employee_id"),
             event.get("access_point_id"),
-            event.get("event_type", "object_detected"),
-            event["source_type"],
-            event["frame_index"],
-            event["timestamp"],
-            event.get("class_name"),
-            event.get("confidence"),
-            str(event.get("track_id")) if event.get("track_id") is not None else None,
-            1 if event.get("roi_inside") else 0,
-            event.get("center_x"),
-            event.get("center_y"),
-            event.get("frame_width"),
-            event.get("frame_height"),
-            event.get("message"),
         ),
     )
+    # Raw telemetry stays in detection_events, while domain events are linked via access_logs.
+    if event_scope == "raw":
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO detection_events (
+                id, session_id, access_log_id, employee_id, access_point_id, event_type,
+                source_type, frame_index, timestamp, class_name, confidence, track_id,
+                roi_inside, center_x, center_y, frame_width, frame_height, message
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event["event_id"],
+                event["session_id"],
+                access_log_id,
+                event.get("employee_id"),
+                event.get("access_point_id"),
+                event.get("event_type", "object_detected"),
+                event["source_type"],
+                event["frame_index"],
+                event["timestamp"],
+                event.get("class_name"),
+                event.get("confidence"),
+                str(event.get("track_id")) if event.get("track_id") is not None else None,
+                1 if event.get("roi_inside") else 0,
+                event.get("center_x"),
+                event.get("center_y"),
+                event.get("frame_width"),
+                event.get("frame_height"),
+                event.get("message"),
+            ),
+        )
     conn.commit()
     conn.close()
 
@@ -434,6 +480,10 @@ def load_history_from_db():
                 "frame_width": row["frame_width"],
                 "frame_height": row["frame_height"],
                 "message": row["message"] or "",
+                "event_scope": row["event_scope"] if "event_scope" in row.keys() else "raw",
+                "access_log_id": row["access_log_id"] if "access_log_id" in row.keys() else None,
+                "employee_id": row["employee_id"] if "employee_id" in row.keys() else None,
+                "access_point_id": row["access_point_id"] if "access_point_id" in row.keys() else None,
             }
         )
 

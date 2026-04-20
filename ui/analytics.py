@@ -159,6 +159,7 @@ def _render_events_tab(st, events: list[dict], show_advanced: bool):
                 "session_id": event["session_id"][:8],
                 "event_type": event.get("event_type", "object_detected"),
                 "source_type": event["source_type"],
+                "event_scope": event.get("event_scope", "raw"),
                 "frame_index": event["frame_index"],
                 "timestamp": datetime.fromtimestamp(event["timestamp"]),
                 "class_name": event["class_name"],
@@ -177,10 +178,11 @@ def _render_events_tab(st, events: list[dict], show_advanced: bool):
     )
 
     if not show_advanced:
-        simple_events = df_events[["timestamp", "class_name", "event_type", "message"]].copy()
+        simple_events = df_events[["timestamp", "event_scope", "class_name", "event_type", "message"]].copy()
         simple_events = simple_events.rename(
             columns={
                 "timestamp": "Время",
+                "event_scope": "Уровень",
                 "class_name": "Класс",
                 "event_type": "Тип события",
                 "message": "Описание",
@@ -289,6 +291,7 @@ def _render_export_tab(st, sessions: list[dict], events: list[dict]):
             {
                 "event_id": event["event_id"],
                 "session_id": event["session_id"],
+                "event_scope": event.get("event_scope", "raw"),
                 "event_type": event.get("event_type", "object_detected"),
                 "source_type": event["source_type"],
                 "frame_index": event["frame_index"],
