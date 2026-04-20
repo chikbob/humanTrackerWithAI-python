@@ -51,6 +51,7 @@ def main():
     init_session_state(st.session_state, load_history_from_db)
     query_params = st.query_params
     standalone_live_mode = query_params.get("view", "") == "live-window"
+    standalone_overlay_enabled = query_params.get("overlay", "1") != "0"
     configure_page(st, standalone_mode=standalone_live_mode)
     preferred_live_source = query_params.get("source", "")
     preferred_live_source_id = query_params.get("source_id", "")
@@ -171,6 +172,7 @@ def main():
             preferred_source_id=preferred_live_source_id,
             preferred_source_kind=preferred_live_source_kind,
             standalone_mode=standalone_live_mode,
+            standalone_overlay_enabled=standalone_overlay_enabled,
         )
     elif section == "Сотрудники":
         render_employees(

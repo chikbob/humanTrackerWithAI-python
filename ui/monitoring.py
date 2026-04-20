@@ -148,6 +148,7 @@ def render_online_monitoring(
     preferred_source_id: str = "",
     preferred_source_kind: str = "",
     standalone_mode: bool = False,
+    standalone_overlay_enabled: bool = True,
 ):
     statuses_by_id = {status["source_id"]: status for status in worker_statuses}
     source_bindings = _build_source_bindings(active_sources, statuses_by_id)
@@ -234,6 +235,7 @@ def render_online_monitoring(
             db_insert_event=db_insert_event,
             db_insert_frame=db_insert_frame,
             db_upsert_session=db_upsert_session,
+            overlay_enabled=standalone_overlay_enabled,
         )
         return
 
@@ -247,15 +249,31 @@ def render_online_monitoring(
 
     left_col, right_col = st.columns([2.2, 0.9], gap="large")
 
+    _render_monitoring_wall_summary(
+        st,
+        displayed_bindings=displayed_bindings,
+        primary_binding=primary_binding,
+        worker_statuses=worker_statuses,
+        source_cards=source_cards,
+    )
+
     with left_col:
         with st.container(border=True):
             st.subheader("Онлайн-мониторинг входной зоны")
             if not standalone_mode:
-                live_window_url = _build_live_window_url(selected_binding)
-                st.markdown(
-                    f'<a href="{live_window_url}" target="_blank" rel="noopener noreferrer">Открыть live monitoring в отдельном окне</a>',
-                    unsafe_allow_html=True,
-                )
+                link_col1, link_col2 = st.columns(2)
+                with link_col1:
+                    live_window_url = _build_live_window_url(selected_binding, overlay_enabled=True)
+                    st.markdown(
+                        f'<a href="{live_window_url}" target="_blank" rel="noopener noreferrer">Открыть live monitoring в отдельном окне</a>',
+                        unsafe_allow_html=True,
+                    )
+                with link_col2:
+                    clean_window_url = _build_live_window_url(selected_binding, overlay_enabled=False)
+                    st.markdown(
+                        f'<a href="{clean_window_url}" target="_blank" rel="noopener noreferrer">Открыть чистое окно без overlay</a>',
+                        unsafe_allow_html=True,
+                    )
             st.caption(
                 "Production-источники поступают из worker runtime. Browser/local источники доступны как foreground live mode "
                 "и не дублируют server-side pipeline."
@@ -335,7 +353,7 @@ def render_online_monitoring(
                         last_frame_at=_fmt_ts(_resolve_binding_last_frame_at(binding, session_state)),
                         recent_event_count=card.get("recent_event_count", 0),
                         error_text=card.get("last_error") or "",
-                        live_window_url=_build_live_window_url(binding),
+                        live_window_url=_build_live_window_url(binding, overlay_enabled=True),
                     ),
                     unsafe_allow_html=True,
                 )
@@ -451,10 +469,11 @@ def _max_rendered_sources(layout_mode: str) -> int:
     return 4
 
 
-def _build_live_window_url(binding: dict) -> str:
+def _build_live_window_url(binding: dict, *, overlay_enabled: bool = True) -> str:
     return (
         f"?view=live-window&source={binding['kind']}"
         f"&source_id={binding['source_id']}&source_kind={binding['kind']}"
+        f"&overlay={'1' if overlay_enabled else '0'}"
     )
 
 
@@ -561,7 +580,21 @@ def _render_source_tile(
 ):
     with st.container(border=True):
         badge = "Главный источник" if is_primary else "Дополнительный источник"
-        st.markdown(f"**{binding['name']}**  \n`{binding['kind_label']}` • {badge}")
+        source_status = source_card.get("status") or binding.get("status", {}).get("status", "offline")
+        st.markdown(
+            f"""
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px;">
+                <div>
+                    <div style="font-size:18px;font-weight:700;color:#eef6ff;">{binding['name']}</div>
+                    <div style="font-size:12px;color:#8ea4ba;text-transform:uppercase;letter-spacing:.08em;">{binding['kind_label']} • {badge}</div>
+                </div>
+                <div style="padding:6px 10px;border-radius:999px;background:rgba(15,23,42,.7);border:1px solid rgba(148,163,184,.18);color:#d9e7f5;font-size:12px;">
+                    {source_status}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         if binding["kind"] == "production" and binding["source"] is not None:
             snapshot_path = binding["status"].get("last_snapshot_path")
             if snapshot_path and Path(snapshot_path).exists():
@@ -579,6 +612,10 @@ def _render_source_tile(
                     "Если это одна и та же физическая камера, возможен конфликт доступа."
                 )
                 _render_embedded_live_source(st, binding)
+                st.markdown(
+                    f'<a href="{_build_live_window_url(binding, overlay_enabled=False)}" target="_blank" rel="noopener noreferrer">Открыть этот источник в чистом окне</a>',
+                    unsafe_allow_html=True,
+                )
             else:
                 st.info(
                     "Дополнительные browser/local источники можно встроить через переключатель «Встроить доп. live» "
@@ -662,6 +699,36 @@ def _render_source_status_badge(*, title: str, source_type: str, status: str, fp
     """
 
 
+def _render_monitoring_wall_summary(st, *, displayed_bindings: list[dict], primary_binding: dict, worker_statuses: list[dict], source_cards: dict):
+    online_count = sum(1 for status in worker_statuses if status.get("is_connected"))
+    interactive_count = sum(1 for binding in displayed_bindings if binding["kind"] in {"browser_camera", "local_camera"})
+    total_recent_events = sum((source_cards.get(binding.get("source_id")) or {}).get("recent_event_count", 0) for binding in displayed_bindings)
+    st.markdown(
+        f"""
+        <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:12px;margin-bottom:14px;">
+            <div style="padding:14px 16px;border-radius:18px;background:linear-gradient(135deg, rgba(9,18,28,.92), rgba(16,30,44,.92));border:1px solid rgba(88,166,255,.18);">
+                <div style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#7f9bb5;">Security Video Wall</div>
+                <div style="margin-top:6px;font-size:22px;font-weight:700;color:#eef6ff;">{primary_binding['name']}</div>
+                <div style="margin-top:4px;color:#9fb3c8;">Главный источник видеостены • мультиэкранный мониторинг входной зоны</div>
+            </div>
+            <div style="padding:14px 16px;border-radius:18px;background:rgba(14,22,32,.92);border:1px solid rgba(148,163,184,.16);">
+                <div style="font-size:12px;color:#7f9bb5;text-transform:uppercase;">Отображается</div>
+                <div style="margin-top:8px;font-size:24px;font-weight:700;color:#eef6ff;">{len(displayed_bindings)}</div>
+            </div>
+            <div style="padding:14px 16px;border-radius:18px;background:rgba(14,22,32,.92);border:1px solid rgba(148,163,184,.16);">
+                <div style="font-size:12px;color:#7f9bb5;text-transform:uppercase;">Online источники</div>
+                <div style="margin-top:8px;font-size:24px;font-weight:700;color:#7ee787;">{online_count}</div>
+            </div>
+            <div style="padding:14px 16px;border-radius:18px;background:rgba(14,22,32,.92);border:1px solid rgba(148,163,184,.16);">
+                <div style="font-size:12px;color:#7f9bb5;text-transform:uppercase;">Live / события</div>
+                <div style="margin-top:8px;font-size:24px;font-weight:700;color:#eef6ff;">{interactive_count} / {total_recent_events}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_standalone_live_window(
     st,
     *,
@@ -679,6 +746,7 @@ def _render_standalone_live_window(
     db_insert_event,
     db_insert_frame,
     db_upsert_session,
+    overlay_enabled: bool,
 ):
     st.markdown(
         """
@@ -714,18 +782,21 @@ def _render_standalone_live_window(
     )
     source_name = selected_binding.get("name") or (selected_source["name"] if selected_source is not None else "Источник не задан")
     access_point_label = selected_source.get("location") if selected_source is not None and selected_source.get("location") else access_point_name
-    st.markdown(
-        f"""
-        <div class="standalone-overlay">
-            <div><strong>{source_name}</strong></div>
-            <div>Режим: {selected_binding.get('kind_label', selected_binding.get('kind', 'unknown'))}</div>
-            <div>Точка доступа: {access_point_label}</div>
-            <div>Последний кадр: {_fmt_ts(selected_last_frame_at)}</div>
-        </div>
-        <div class="standalone-live-shell">
-        """,
-        unsafe_allow_html=True,
-    )
+    if overlay_enabled:
+        st.markdown(
+            f"""
+            <div class="standalone-overlay">
+                <div><strong>{source_name}</strong></div>
+                <div>Режим: {selected_binding.get('kind_label', selected_binding.get('kind', 'unknown'))}</div>
+                <div>Точка доступа: {access_point_label}</div>
+                <div>Последний кадр: {_fmt_ts(selected_last_frame_at)}</div>
+            </div>
+            <div class="standalone-live-shell">
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown('<div class="standalone-live-shell">', unsafe_allow_html=True)
     if selected_binding["kind"] == "production" and selected_source is not None:
         snapshot_path = selected_status.get("last_snapshot_path")
         if snapshot_path and Path(snapshot_path).exists():
