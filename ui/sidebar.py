@@ -1,3 +1,6 @@
+from utils.performance import DEFAULT_FRAME_SKIP, DEFAULT_INFERENCE_SIZE, INFERENCE_SIZE_OPTIONS
+
+
 MODEL_OPTIONS = [
     "yolov8n.pt (самая быстрая, базовая)",
     "yolov8s.pt (сбалансированная)",
@@ -23,6 +26,7 @@ ROTATION_MAP = {"0°": 0, "90° вправо": 90, "180°": 180, "90° влев�
 
 def render_primary_sidebar(st):
     st.sidebar.header("⚙️ Параметры системы")
+    demo_mode = st.sidebar.checkbox("Демо-режим защиты ВКР", value=False)
     model_choice = st.sidebar.selectbox("Модель анализа видеопотока", options=MODEL_OPTIONS, index=1)
     source_mode = st.sidebar.radio(
         "Источник данных входной зоны",
@@ -42,6 +46,7 @@ def render_primary_sidebar(st):
     enable_notifications = st.sidebar.checkbox("Включить уведомления оператора", value=True)
     st.session_state.rotation_angle = ROTATION_MAP[rotation_choice]
     return {
+        "demo_mode": demo_mode,
         "model_choice": model_choice,
         "source_mode": source_mode,
         "show_advanced": show_advanced,
@@ -127,4 +132,3 @@ def render_detection_sidebar(st, all_class_names: list[str], show_advanced: bool
             "rule_disappear_seconds": rule_disappear_seconds,
         },
     }
-from utils.performance import DEFAULT_FRAME_SKIP, DEFAULT_INFERENCE_SIZE, INFERENCE_SIZE_OPTIONS

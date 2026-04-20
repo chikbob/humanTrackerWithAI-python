@@ -13,6 +13,7 @@ from db.repository import (
     db_insert_event,
     db_insert_frame,
     db_upsert_session,
+    ensure_demo_employees,
     init_db,
     load_access_logs,
     load_employees,
@@ -52,10 +53,14 @@ def main():
     init_db()
     init_session_state(st.session_state, load_history_from_db)
     configure_page(st)
-    employees = load_employees()
-    access_logs = load_access_logs()
 
     primary_config = render_primary_sidebar(st)
+    demo_mode = primary_config["demo_mode"]
+    if demo_mode:
+        ensure_demo_employees()
+
+    employees = load_employees()
+    access_logs = load_access_logs()
     model_name = MODEL_MAP[primary_config["model_choice"]]
     model = load_model(model_name)
 
@@ -68,11 +73,11 @@ def main():
 
     source_mode = primary_config["source_mode"]
     rotation_angle = primary_config["rotation_angle"]
-    conf_threshold = primary_config["conf_threshold"]
-    notify_conf_threshold = primary_config["notify_conf_threshold"]
-    inference_size = primary_config["inference_size"]
-    frame_skip = primary_config["frame_skip"]
-    enable_notifications = primary_config["enable_notifications"]
+    conf_threshold = 0.45 if demo_mode else primary_config["conf_threshold"]
+    notify_conf_threshold = 0.45 if demo_mode else primary_config["notify_conf_threshold"]
+    inference_size = 512 if demo_mode else primary_config["inference_size"]
+    frame_skip = 1 if demo_mode else primary_config["frame_skip"]
+    enable_notifications = True if demo_mode else primary_config["enable_notifications"]
     animal_filter = secondary_config["animal_filter"]
     track_classes = secondary_config["track_classes"]
     roi_config = secondary_config["roi_config"]
@@ -87,6 +92,10 @@ def main():
         "default_access_point_id": None,
         "prolonged_presence_seconds": 10,
     }
+    if demo_mode:
+        roi_config["enable_roi"] = True
+        event_settings["rule_disappear_enabled"] = True
+        event_settings["rule_disappear_seconds"] = 5
 
     def notify(text: str):
         add_notification(
@@ -131,6 +140,10 @@ def main():
     with work_col:
         with st.container(border=True):
             st.subheader("🎥 Мониторинг входной зоны в реальном времени")
+            if demo_mode:
+                st.caption(
+                    "Демо-режим активен: включены устойчивые параметры анализа и подготовлен тестовый набор сотрудников."
+                )
             frame_display = st.empty()
 
             if source_mode == "📁 Загрузить фото":

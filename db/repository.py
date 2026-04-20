@@ -586,6 +586,35 @@ def update_employee_status(*, employee_id: int, status: str):
     conn.close()
 
 
+def ensure_demo_employees():
+    """
+    Seed a minimal employee list for a stable thesis demo.
+
+    The function is idempotent and does not overwrite existing records.
+    """
+    conn = get_db_conn()
+    existing_count = conn.execute("SELECT COUNT(*) AS cnt FROM employees").fetchone()["cnt"]
+    if existing_count > 0:
+        conn.close()
+        return False
+
+    demo_rows = [
+        ("Иванов Иван Иванович", "Служба эксплуатации", "Инженер", "active", time.time()),
+        ("Петров Петр Сергеевич", "Отдел безопасности", "Оператор", "active", time.time()),
+        ("Сидорова Анна Викторовна", "Администрация", "Менеджер", "inactive", time.time()),
+    ]
+    conn.executemany(
+        """
+        INSERT INTO employees (full_name, department, position, status, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        demo_rows,
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
 def load_access_logs():
     conn = get_db_conn()
     rows = conn.execute(
