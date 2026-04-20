@@ -11,6 +11,8 @@ venv/
 
 # Local runtime data
 monitoring.db
+runtime_data/
+logs/
 
 # Model weights (downloaded automatically by Ultralytics when needed)
 *.pt
