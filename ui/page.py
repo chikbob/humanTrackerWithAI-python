@@ -1,4 +1,4 @@
-def configure_page(st):
+def configure_page(st, *, standalone_mode: bool = False):
     st.set_page_config(page_title="Система мониторинга прохода сотрудников", layout="wide")
     st.markdown(
         """
@@ -75,6 +75,8 @@ def configure_page(st):
         """,
         unsafe_allow_html=True,
     )
+    if standalone_mode:
+        return
     st.markdown(
         """
         <div class="access-shell">

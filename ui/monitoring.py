@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 import pandas as pd
 from PIL import Image
+import streamlit.components.v1 as components
 
 from analytics.access import build_monitoring_source_cards
 from config.rtc_config import build_rtc_configuration
@@ -182,7 +183,7 @@ def render_online_monitoring(
     layout_mode = "single"
     primary_binding = selected_bindings[0]
     if not standalone_mode:
-        control_col1, control_col2, control_col3 = st.columns([1.6, 1.0, 1.2])
+        control_col1, control_col2, control_col3, control_col4 = st.columns([1.45, 1.0, 0.9, 1.15])
         with control_col1:
             layout_mode = st.selectbox(
                 "Режим отображения",
@@ -203,6 +204,12 @@ def render_online_monitoring(
             primary_binding = next(binding for binding in selected_bindings if binding["label"] == primary_label)
         with control_col3:
             st.metric("Одновременных карточек", min(len(selected_bindings), _max_rendered_sources(layout_mode)))
+        with control_col4:
+            session_state.monitoring_embed_secondary_live = st.toggle(
+                "Встроить доп. live",
+                value=bool(session_state.get("monitoring_embed_secondary_live", False)),
+                help="Дополнительные browser/local источники будут открываться как встроенные standalone-view. Это тяжелее по ресурсам, но позволяет видеть несколько интерактивных камер сразу.",
+            )
         selected_bindings = _prioritize_primary_binding(selected_bindings, primary_binding)
 
     selected_binding = primary_binding
@@ -269,6 +276,7 @@ def render_online_monitoring(
                 db_insert_frame=db_insert_frame,
                 db_upsert_session=db_upsert_session,
                 layout_mode=layout_mode,
+                embed_secondary_live=bool(session_state.get("monitoring_embed_secondary_live", False)),
             )
 
         with st.container(border=True):
@@ -467,6 +475,7 @@ def _render_source_layout(
     db_insert_frame,
     db_upsert_session,
     layout_mode: str,
+    embed_secondary_live: bool,
 ):
     if layout_mode == "list":
         for binding in bindings:
@@ -485,6 +494,7 @@ def _render_source_layout(
                 db_insert_event=db_insert_event,
                 db_insert_frame=db_insert_frame,
                 db_upsert_session=db_upsert_session,
+                embed_secondary_live=embed_secondary_live,
             )
         return
 
@@ -507,6 +517,7 @@ def _render_source_layout(
                     db_insert_event=db_insert_event,
                     db_insert_frame=db_insert_frame,
                     db_upsert_session=db_upsert_session,
+                    embed_secondary_live=embed_secondary_live,
                 )
         return
 
@@ -526,6 +537,7 @@ def _render_source_layout(
             db_insert_event=db_insert_event,
             db_insert_frame=db_insert_frame,
             db_upsert_session=db_upsert_session,
+            embed_secondary_live=embed_secondary_live,
         )
 
 
@@ -545,6 +557,7 @@ def _render_source_tile(
     db_insert_event,
     db_insert_frame,
     db_upsert_session,
+    embed_secondary_live: bool,
 ):
     with st.container(border=True):
         badge = "Главный источник" if is_primary else "Дополнительный источник"
@@ -560,10 +573,17 @@ def _render_source_tile(
             return
 
         if not is_primary:
-            st.info(
-                "Интерактивные browser/local источники рендерятся только для главного окна. "
-                "Для этого источника используйте «Открыть отдельно»."
-            )
+            if embed_secondary_live:
+                st.caption(
+                    "Дополнительный интерактивный источник открыт как встроенный live-view. "
+                    "Если это одна и та же физическая камера, возможен конфликт доступа."
+                )
+                _render_embedded_live_source(st, binding)
+            else:
+                st.info(
+                    "Дополнительные browser/local источники можно встроить через переключатель «Встроить доп. live» "
+                    "или открыть отдельно."
+                )
             return
 
         if binding["kind"] == "browser_camera":
@@ -598,6 +618,20 @@ def _render_source_tile(
                 standalone_mode=False,
             )
             return
+
+
+def _render_embedded_live_source(st, binding: dict):
+    iframe_src = _build_live_window_url(binding)
+    components.html(
+        f"""
+        <iframe
+            src="{iframe_src}"
+            style="width:100%;height:420px;border:1px solid rgba(148,163,184,.16);border-radius:16px;background:#000;"
+            allow="camera; microphone; autoplay; fullscreen"
+        ></iframe>
+        """,
+        height=430,
+    )
 
 
 def _render_source_status_badge(*, title: str, source_type: str, status: str, fps, last_frame_at: str, recent_event_count: int, error_text: str, live_window_url: str) -> str:
@@ -651,7 +685,7 @@ def _render_standalone_live_window(
         <style>
             .standalone-live-shell {
                 width: 100vw;
-                height: 100vh;
+                min-height: 100vh;
                 overflow: hidden;
                 background: #000;
             }
@@ -678,12 +712,14 @@ def _render_standalone_live_window(
         """,
         unsafe_allow_html=True,
     )
-    source_name = selected_source["name"] if selected_source is not None else "Браузерная камера"
+    source_name = selected_binding.get("name") or (selected_source["name"] if selected_source is not None else "Источник не задан")
+    access_point_label = selected_source.get("location") if selected_source is not None and selected_source.get("location") else access_point_name
     st.markdown(
         f"""
         <div class="standalone-overlay">
             <div><strong>{source_name}</strong></div>
-            <div>Точка доступа: {access_point_name}</div>
+            <div>Режим: {selected_binding.get('kind_label', selected_binding.get('kind', 'unknown'))}</div>
+            <div>Точка доступа: {access_point_label}</div>
             <div>Последний кадр: {_fmt_ts(selected_last_frame_at)}</div>
         </div>
         <div class="standalone-live-shell">

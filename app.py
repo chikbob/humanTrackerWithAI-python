@@ -49,9 +49,9 @@ from ui.sources import render_video_sources
 def main():
     init_db()
     init_session_state(st.session_state, load_history_from_db)
-    configure_page(st)
     query_params = st.query_params
     standalone_live_mode = query_params.get("view", "") == "live-window"
+    configure_page(st, standalone_mode=standalone_live_mode)
     preferred_live_source = query_params.get("source", "")
     preferred_live_source_id = query_params.get("source_id", "")
     preferred_live_source_kind = query_params.get("source_kind", "")
