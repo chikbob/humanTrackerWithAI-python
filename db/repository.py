@@ -3,6 +3,8 @@ import os
 import sqlite3
 import time
 
+from config.app_config import SYSTEM_SETTING_DEFAULTS
+
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DB_PATH = os.path.join(APP_DIR, "monitoring.db")
@@ -174,8 +176,86 @@ def init_db():
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS video_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            location TEXT,
+            is_active INTEGER DEFAULT 0,
+            last_seen REAL,
+            description TEXT,
+            created_at REAL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS system_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at REAL
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS worker_status (
+            source_id INTEGER PRIMARY KEY,
+            status TEXT,
+            is_connected INTEGER DEFAULT 0,
+            last_heartbeat REAL,
+            last_frame_at REAL,
+            fps REAL,
+            reconnect_count INTEGER DEFAULT 0,
+            last_error TEXT,
+            last_snapshot_path TEXT,
+            updated_at REAL,
+            FOREIGN KEY (source_id) REFERENCES video_sources(id)
+        )
+        """
+    )
 
     # Migration-safe column checks for databases created by older app versions.
+    _ensure_columns(
+        conn,
+        "video_sources",
+        [
+            ("name", "name TEXT NOT NULL DEFAULT ''"),
+            ("source_type", "source_type TEXT NOT NULL DEFAULT 'rtsp'"),
+            ("source_url", "source_url TEXT NOT NULL DEFAULT ''"),
+            ("location", "location TEXT"),
+            ("is_active", "is_active INTEGER DEFAULT 0"),
+            ("last_seen", "last_seen REAL"),
+            ("description", "description TEXT"),
+            ("created_at", "created_at REAL"),
+        ],
+    )
+    _ensure_columns(
+        conn,
+        "system_settings",
+        [
+            ("value", "value TEXT"),
+            ("updated_at", "updated_at REAL"),
+        ],
+    )
+    _ensure_columns(
+        conn,
+        "worker_status",
+        [
+            ("status", "status TEXT"),
+            ("is_connected", "is_connected INTEGER DEFAULT 0"),
+            ("last_heartbeat", "last_heartbeat REAL"),
+            ("last_frame_at", "last_frame_at REAL"),
+            ("fps", "fps REAL"),
+            ("reconnect_count", "reconnect_count INTEGER DEFAULT 0"),
+            ("last_error", "last_error TEXT"),
+            ("last_snapshot_path", "last_snapshot_path TEXT"),
+            ("updated_at", "updated_at REAL"),
+        ],
+    )
     _ensure_columns(
         conn,
         "events",
@@ -247,6 +327,15 @@ def init_db():
             ("identification_status", "identification_status TEXT DEFAULT 'not_configured'"),
         ],
     )
+    for key, value in SYSTEM_SETTING_DEFAULTS.items():
+        conn.execute(
+            """
+            INSERT INTO system_settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO NOTHING
+            """,
+            (key, value, time.time()),
+        )
     conn.commit()
     conn.close()
 
@@ -637,3 +726,152 @@ def load_access_logs():
     ).fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+def load_video_sources():
+    conn = get_db_conn()
+    rows = conn.execute(
+        """
+        SELECT id, name, source_type, source_url, location, is_active, last_seen, description, created_at
+        FROM video_sources
+        ORDER BY is_active DESC, name ASC
+        """
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def load_active_video_sources():
+    conn = get_db_conn()
+    rows = conn.execute(
+        """
+        SELECT id, name, source_type, source_url, location, is_active, last_seen, description, created_at
+        FROM video_sources
+        WHERE is_active = 1
+        ORDER BY id ASC
+        """
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def create_video_source(*, name: str, source_type: str, source_url: str, location: str, description: str, is_active: bool):
+    conn = get_db_conn()
+    conn.execute(
+        """
+        INSERT INTO video_sources (name, source_type, source_url, location, is_active, last_seen, description, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (name.strip(), source_type.strip(), source_url.strip(), location.strip(), 1 if is_active else 0, None, description.strip(), time.time()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_video_source(*, source_id: int, name: str, source_type: str, source_url: str, location: str, description: str):
+    conn = get_db_conn()
+    conn.execute(
+        """
+        UPDATE video_sources
+        SET name = ?, source_type = ?, source_url = ?, location = ?, description = ?
+        WHERE id = ?
+        """,
+        (name.strip(), source_type.strip(), source_url.strip(), location.strip(), description.strip(), source_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def set_video_source_active(*, source_id: int, is_active: bool):
+    conn = get_db_conn()
+    conn.execute("UPDATE video_sources SET is_active = ? WHERE id = ?", (1 if is_active else 0, source_id))
+    conn.commit()
+    conn.close()
+
+
+def update_video_source_last_seen(*, source_id: int, last_seen: float):
+    conn = get_db_conn()
+    conn.execute("UPDATE video_sources SET last_seen = ? WHERE id = ?", (last_seen, source_id))
+    conn.commit()
+    conn.close()
+
+
+def load_system_settings():
+    conn = get_db_conn()
+    rows = conn.execute("SELECT key, value, updated_at FROM system_settings ORDER BY key ASC").fetchall()
+    conn.close()
+    return {row["key"]: row["value"] for row in rows}
+
+
+def set_system_setting(*, key: str, value: str):
+    conn = get_db_conn()
+    conn.execute(
+        """
+        INSERT INTO system_settings (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        """,
+        (key, value, time.time()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_worker_statuses():
+    conn = get_db_conn()
+    rows = conn.execute(
+        """
+        SELECT source_id, status, is_connected, last_heartbeat, last_frame_at, fps, reconnect_count, last_error, last_snapshot_path, updated_at
+        FROM worker_status
+        ORDER BY source_id ASC
+        """
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def upsert_worker_status(
+    *,
+    source_id: int,
+    status: str,
+    is_connected: bool,
+    last_heartbeat: float,
+    last_frame_at,
+    fps: float,
+    reconnect_count: int,
+    last_error: str,
+    last_snapshot_path: str,
+):
+    conn = get_db_conn()
+    conn.execute(
+        """
+        INSERT INTO worker_status (
+            source_id, status, is_connected, last_heartbeat, last_frame_at, fps,
+            reconnect_count, last_error, last_snapshot_path, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_id) DO UPDATE SET
+            status = excluded.status,
+            is_connected = excluded.is_connected,
+            last_heartbeat = excluded.last_heartbeat,
+            last_frame_at = excluded.last_frame_at,
+            fps = excluded.fps,
+            reconnect_count = excluded.reconnect_count,
+            last_error = excluded.last_error,
+            last_snapshot_path = excluded.last_snapshot_path,
+            updated_at = excluded.updated_at
+        """,
+        (
+            source_id,
+            status,
+            1 if is_connected else 0,
+            last_heartbeat,
+            last_frame_at,
+            fps,
+            reconnect_count,
+            last_error,
+            last_snapshot_path,
+            time.time(),
+        ),
+    )
+    conn.commit()
+    conn.close()
