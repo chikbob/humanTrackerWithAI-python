@@ -73,6 +73,7 @@ def detect_and_annotate(
     use_tracking: bool,
     model,
     conf_threshold: float,
+    inference_size: int,
     session: Optional[dict],
     class_meta: dict,
     animal_filter: str,
@@ -90,7 +91,7 @@ def detect_and_annotate(
         try:
             results = model.track(
                 frame_bgr,
-                imgsz=640,
+                imgsz=inference_size,
                 conf=conf_threshold,
                 iou=0.5,
                 persist=True,
@@ -100,9 +101,9 @@ def detect_and_annotate(
         except ModuleNotFoundError:
             if warning_callback is not None:
                 warning_callback("Трекинг-недоступен: отсутствуют зависимости. Выполняется только детекция.")
-            results = model.predict(frame_bgr, imgsz=640, conf=conf_threshold, verbose=False)
+            results = model.predict(frame_bgr, imgsz=inference_size, conf=conf_threshold, verbose=False)
     else:
-        results = model.predict(frame_bgr, imgsz=640, conf=conf_threshold, verbose=False)
+        results = model.predict(frame_bgr, imgsz=inference_size, conf=conf_threshold, verbose=False)
     processing_time_ms = (time.time() - t0) * 1000
 
     frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
@@ -184,6 +185,7 @@ def detect_and_draw_live(
     *,
     model,
     conf_threshold: float,
+    inference_size: int,
     class_meta: dict,
     animal_filter: str,
     animal_classes: dict,
@@ -191,7 +193,7 @@ def detect_and_draw_live(
     roi_config: dict,
     draw_box_fn,
 ):
-    results = model.predict(frame_bgr, imgsz=640, conf=conf_threshold, verbose=False)
+    results = model.predict(frame_bgr, imgsz=inference_size, conf=conf_threshold, verbose=False)
     frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
     frame_h, frame_w, _ = frame_rgb.shape
 

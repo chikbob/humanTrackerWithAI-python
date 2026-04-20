@@ -25,6 +25,7 @@ from services.state import finish_session, get_current_session, init_session_sta
 from ui.analytics import render_analytics, render_status_panel
 from ui.page import configure_page
 from ui.sidebar import ANIMAL_CLASSES, MODEL_MAP, render_detection_sidebar, render_primary_sidebar
+from utils.performance import DEFAULT_SESSION_PERSIST_INTERVAL, DEFAULT_UI_REFRESH_INTERVAL_SEC
 from utils.vision import draw_fancy_box, rotate_frame
 
 try:
@@ -69,6 +70,8 @@ def main():
     rotation_angle = primary_config["rotation_angle"]
     conf_threshold = primary_config["conf_threshold"]
     notify_conf_threshold = primary_config["notify_conf_threshold"]
+    inference_size = primary_config["inference_size"]
+    frame_skip = primary_config["frame_skip"]
     enable_notifications = primary_config["enable_notifications"]
     animal_filter = secondary_config["animal_filter"]
     track_classes = secondary_config["track_classes"]
@@ -160,6 +163,7 @@ def main():
                         use_tracking=False,
                         model=model,
                         conf_threshold=conf_threshold,
+                        inference_size=inference_size,
                         session=get_current_session(st.session_state),
                         class_meta=class_meta,
                         animal_filter=animal_filter,
@@ -182,6 +186,8 @@ def main():
                         processing_time_ms=processing_time_ms,
                         detections_meta=detections_meta,
                         rotation_angle=rotation_angle,
+                        persist_interval=DEFAULT_SESSION_PERSIST_INTERVAL,
+                        force_session_sync=True,
                     )
                     finish_session(st.session_state, db_upsert_session)
                     frame_display.image(frame_rgb, channels="RGB")
@@ -215,11 +221,15 @@ def main():
                     cap = cv2.VideoCapture(temp_path)
                     st.info("▶️ Идет анализ видеопотока проходной...")
                     frame_index = 0
+                    last_ui_draw_ts = 0.0
 
                     while cap.isOpened():
                         ret, frame = cap.read()
                         if not ret:
                             break
+                        if frame_skip > 0 and frame_index % (frame_skip + 1) != 0:
+                            frame_index += 1
+                            continue
                         frame = rotate_frame(frame, rotation_angle)
                         frame_rgb, detections_meta, processing_time_ms = detect_and_annotate(
                             frame,
@@ -228,6 +238,7 @@ def main():
                             use_tracking=True,
                             model=model,
                             conf_threshold=conf_threshold,
+                            inference_size=inference_size,
                             session=get_current_session(st.session_state),
                             class_meta=class_meta,
                             animal_filter=animal_filter,
@@ -249,9 +260,12 @@ def main():
                             processing_time_ms=processing_time_ms,
                             detections_meta=detections_meta,
                             rotation_angle=rotation_angle,
+                            persist_interval=DEFAULT_SESSION_PERSIST_INTERVAL,
                         )
                         frame_index += 1
-                        frame_display.image(frame_rgb, channels="RGB")
+                        if time.time() - last_ui_draw_ts >= DEFAULT_UI_REFRESH_INTERVAL_SEC:
+                            frame_display.image(frame_rgb, channels="RGB")
+                            last_ui_draw_ts = time.time()
 
                     cap.release()
                     try:
@@ -306,6 +320,7 @@ def main():
                                 rotated,
                                 model=model,
                                 conf_threshold=conf_threshold,
+                                inference_size=inference_size,
                                 class_meta=class_meta,
                                 animal_filter=animal_filter,
                                 animal_classes=ANIMAL_CLASSES,
@@ -355,6 +370,7 @@ def main():
                             use_tracking=False,
                             model=model,
                             conf_threshold=conf_threshold,
+                            inference_size=inference_size,
                             session=get_current_session(st.session_state),
                             class_meta=class_meta,
                             animal_filter=animal_filter,
@@ -376,6 +392,8 @@ def main():
                             processing_time_ms=processing_time_ms,
                             detections_meta=detections_meta,
                             rotation_angle=rotation_angle,
+                            persist_interval=DEFAULT_SESSION_PERSIST_INTERVAL,
+                            force_session_sync=True,
                         )
                         finish_session(st.session_state, db_upsert_session)
                         frame_display.image(frame_rgb, channels="RGB")
@@ -418,6 +436,9 @@ def main():
                                 if not ret:
                                     st.warning("⚠️ Кадр с камеры проходной не получен.")
                                     break
+                                if frame_skip > 0 and frame_index % (frame_skip + 1) != 0:
+                                    frame_index += 1
+                                    continue
                                 frame = rotate_frame(frame, rotation_angle)
                                 frame_rgb, detections_meta, processing_time_ms = detect_and_annotate(
                                     frame,
@@ -426,6 +447,7 @@ def main():
                                     use_tracking=True,
                                     model=model,
                                     conf_threshold=conf_threshold,
+                                    inference_size=inference_size,
                                     session=get_current_session(st.session_state),
                                     class_meta=class_meta,
                                     animal_filter=animal_filter,
@@ -447,10 +469,11 @@ def main():
                                     processing_time_ms=processing_time_ms,
                                     detections_meta=detections_meta,
                                     rotation_angle=rotation_angle,
+                                    persist_interval=DEFAULT_SESSION_PERSIST_INTERVAL,
                                 )
                                 frame_index += 1
 
-                                if time.time() - prev_time > 0.1:
+                                if time.time() - prev_time > DEFAULT_UI_REFRESH_INTERVAL_SEC:
                                     frame_display.image(frame_rgb, channels="RGB")
                                     prev_time = time.time()
 

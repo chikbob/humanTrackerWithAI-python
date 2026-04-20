@@ -33,6 +33,12 @@ def render_primary_sidebar(st):
     rotation_choice = st.sidebar.selectbox("Поворот изображения камеры", ROTATION_OPTIONS, index=0)
     conf_threshold = st.sidebar.slider("Порог уверенности детекции", 0.1, 0.95, 0.5, 0.05)
     notify_conf_threshold = st.sidebar.slider("Порог уведомлений проходной", 0.1, 0.95, 0.5, 0.05)
+    inference_size = st.sidebar.selectbox(
+        "Размер кадра для инференса",
+        options=INFERENCE_SIZE_OPTIONS,
+        index=INFERENCE_SIZE_OPTIONS.index(DEFAULT_INFERENCE_SIZE),
+    )
+    frame_skip = st.sidebar.slider("Пропуск кадров", 0, 5, DEFAULT_FRAME_SKIP, 1)
     enable_notifications = st.sidebar.checkbox("Включить уведомления дежурному", value=True)
     st.session_state.rotation_angle = ROTATION_MAP[rotation_choice]
     return {
@@ -42,6 +48,8 @@ def render_primary_sidebar(st):
         "rotation_angle": ROTATION_MAP[rotation_choice],
         "conf_threshold": conf_threshold,
         "notify_conf_threshold": notify_conf_threshold,
+        "inference_size": inference_size,
+        "frame_skip": frame_skip,
         "enable_notifications": enable_notifications,
     }
 
@@ -119,3 +127,4 @@ def render_detection_sidebar(st, all_class_names: list[str], show_advanced: bool
             "rule_disappear_seconds": rule_disappear_seconds,
         },
     }
+from utils.performance import DEFAULT_FRAME_SKIP, DEFAULT_INFERENCE_SIZE, INFERENCE_SIZE_OPTIONS

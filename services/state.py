@@ -123,6 +123,8 @@ def log_frame(
     processing_time_ms: float,
     detections_meta: list[dict],
     rotation_angle: int,
+    persist_interval: int = 10,
+    force_session_sync: bool = False,
 ):
     session = get_current_session(session_state)
     if not session:
@@ -140,4 +142,5 @@ def log_frame(
     }
     session["frames"].append(frame_record)
     db_insert_frame(session["id"], frame_record)
-    db_upsert_session(session)
+    if force_session_sync or (persist_interval > 0 and len(session["frames"]) % persist_interval == 0):
+        db_upsert_session(session)
