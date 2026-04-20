@@ -445,8 +445,19 @@ def _render_browser_camera_monitor(
     db_insert_frame,
     db_upsert_session,
 ):
-    """Render browser live-stream when available, otherwise fall back to a snapshot workflow."""
-    if WEBRTC_AVAILABLE:
+    """Render a browser camera workflow with a stable default and optional WebRTC mode."""
+    browser_modes = ["Совместимый режим", "WebRTC live"]
+    if not WEBRTC_AVAILABLE:
+        browser_modes = ["Совместимый режим"]
+
+    browser_mode = st.radio(
+        "Режим браузерной камеры",
+        options=browser_modes,
+        horizontal=True,
+        key=f"browser_camera_mode_{source_label}",
+    )
+
+    if browser_mode == "WebRTC live" and WEBRTC_AVAILABLE:
         st.caption("Нажмите Start в виджете ниже и разрешите браузеру доступ к камере.")
 
         def _video_frame_callback(frame):
@@ -476,7 +487,13 @@ def _render_browser_camera_monitor(
         )
         return session_state.get("browser_camera_last_frame_at")
 
-    st.warning("Для live-stream браузерной камеры требуется streamlit-webrtc. Пока доступен режим снимка.")
+    if WEBRTC_AVAILABLE:
+        st.info(
+            "Совместимый режим использует встроенную браузерную камеру Streamlit и работает стабильнее "
+            "на Streamlit Community Cloud и в ограниченных сетях."
+        )
+    else:
+        st.warning("Для live-stream браузерной камеры требуется streamlit-webrtc. Пока доступен режим снимка.")
     shot = st.camera_input("Кадр из браузерной камеры", key="live_monitor_browser_camera")
     if shot is None:
         st.info("Разрешите доступ к камере в браузере и сделайте кадр для анализа входной зоны.")

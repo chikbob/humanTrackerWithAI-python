@@ -503,7 +503,7 @@ def db_insert_event(event: dict):
                 source_type, frame_index, timestamp, class_name, confidence, track_id,
                 roi_inside, center_x, center_y, frame_width, frame_height, message,
                 identified_employee_id, identification_confidence, identification_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event["event_id"],
