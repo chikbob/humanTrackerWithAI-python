@@ -71,8 +71,27 @@ class SourceWorker:
         source_id = source["id"]
         source_runtime = self.connection_state.setdefault(
             source_id,
-            {"frame_index": 0, "reconnect_count": 0, "last_success_ts": 0.0, "offline_event_sent": False},
+            {
+                "frame_index": 0,
+                "reconnect_count": 0,
+                "last_success_ts": 0.0,
+                "offline_event_sent": False,
+                "next_retry_ts": 0.0,
+                "last_error_text": "",
+            },
         )
+        now_ts = time.time()
+        if source_runtime["next_retry_ts"] and now_ts < source_runtime["next_retry_ts"]:
+            self._write_status(
+                source,
+                "reconnecting",
+                False,
+                0.0,
+                source_runtime.get("last_error_text", "Ожидание переподключения."),
+                "",
+                last_frame_at=source.get("last_seen"),
+            )
+            return
         cap = self.captures.get(source_id)
         if cap is None or not cap.isOpened():
             cap = self._open_capture(source, settings, source_runtime)
@@ -139,6 +158,9 @@ class SourceWorker:
         now_ts = time.time()
         update_video_source_last_seen(source_id=source_id, last_seen=now_ts)
         fps = 1000.0 / processing_time_ms if processing_time_ms > 0 else 0.0
+        source_runtime["last_success_ts"] = now_ts
+        source_runtime["next_retry_ts"] = 0.0
+        source_runtime["last_error_text"] = ""
         self._write_status(source, "online", True, fps, "", snapshot_path, last_frame_at=now_ts)
 
         if self.connection_state[source_id]["offline_event_sent"]:
@@ -171,7 +193,17 @@ class SourceWorker:
             existing_cap.release()
         self.captures[source_id] = None
         source_runtime["reconnect_count"] += 1
-        self._write_status(source, "offline", False, 0.0, error_text, "", last_frame_at=source.get("last_seen"))
+        source_runtime["last_error_text"] = error_text
+        source_runtime["next_retry_ts"] = time.time() + max(int(settings["reconnect_interval"]), 1)
+        self._write_status(
+            source,
+            "reconnecting" if source_runtime["offline_event_sent"] else "offline",
+            False,
+            0.0,
+            error_text,
+            "",
+            last_frame_at=source.get("last_seen"),
+        )
         if not source_runtime["offline_event_sent"]:
             source_runtime["offline_event_sent"] = True
             session = self.source_sessions.setdefault(source_id, create_runtime_session(source, settings["model_name"]))
@@ -187,7 +219,6 @@ class SourceWorker:
                 message=f"Источник видеоданных '{source['name']}' временно недоступен",
                 access_point_id=settings["default_access_point_id"],
             )
-        time.sleep(settings["reconnect_interval"])
 
     def _write_status(
         self,

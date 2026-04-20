@@ -148,11 +148,43 @@ python run_worker.py --once
 ### Переменные окружения
 
 - `MONITORING_DB_PATH` — путь к файлу БД.
+- `EMPLOYEE_DB_MODE` — режим справочника сотрудников: `sqlite`, `api`, `supabase`, `postgres`, `mysql`.
+- `EMPLOYEE_API_URL` — URL удаленного employee directory API.
+- `EMPLOYEE_API_TOKEN` — токен доступа к employee API.
+- `SUPABASE_URL` — URL проекта Supabase.
+- `SUPABASE_KEY` — ключ доступа к таблице `employees`.
+- `employee_sync_interval` — интервал автоматической синхронизации справочника сотрудников в секундах через настройки системы.
 
 Пример:
 
 ```bash
 export MONITORING_DB_PATH=/opt/employee-access/data/monitoring.db
+```
+
+### Удаленный справочник сотрудников
+
+Справочник сотрудников работает через `EmployeeRepository` и может переключаться между двумя сценариями:
+
+- `LocalEmployeeRepository` — локальный справочник в `SQLite` с полным CRUD;
+- `RemoteEmployeeRepository` — удаленный справочник через API или Supabase.
+
+Локальная таблица `employees` сохраняется как кэш. Если удаленный источник временно недоступен, интерфейс переходит в режим `read-only` и использует последний успешный локальный кэш сотрудников.
+Автоматическая синхронизация выполняется по интервалу, заданному в `Настройках системы`, и не запускается на каждый rerun интерфейса.
+
+Пример подключения удаленного API:
+
+```bash
+export EMPLOYEE_DB_MODE=api
+export EMPLOYEE_API_URL=https://example.company/api/employees
+export EMPLOYEE_API_TOKEN=secret-token
+```
+
+Пример подключения Supabase:
+
+```bash
+export EMPLOYEE_DB_MODE=supabase
+export SUPABASE_URL=https://project.supabase.co
+export SUPABASE_KEY=service-role-or-anon-key
 ```
 
 ## Подключение RTSP-камеры
@@ -252,7 +284,16 @@ cp .env.example .env
 
 ### Онлайн-мониторинг
 
-- live snapshot production-источника;
+- multi-source monitoring с выбором нескольких источников одновременно;
+- режимы отображения:
+  - `Фокус`
+  - `Сетка 2x2`
+  - `Список`
+  - `Авто-компоновка`
+- выбор главного источника;
+- отдельное окно для любого источника через query params `view=live-window&source_id=...&source_kind=...`;
+- production-источники отображаются через актуальные snapshots и worker status;
+- browser/local источники поднимаются как foreground live mode только для главного окна, чтобы не дублировать production pipeline;
 - статусная панель:
   - `FPS`
   - `confidence threshold`
@@ -279,7 +320,11 @@ cp .env.example .env
 - карточка сотрудника;
 - создание записи;
 - редактирование;
-- смена статуса без удаления.
+- смена статуса без удаления;
+- отображение источника данных;
+- статус синхронизации;
+- время последнего обновления;
+- ошибки синхронизации и read-only fallback режим.
 
 ### Журнал событий
 
@@ -303,9 +348,38 @@ cp .env.example .env
 - `frame_skip` — уменьшает число кадров, проходящих через инференс;
 - `inference_size` — определяет размер кадра для нейросетевой модели;
 - `confidence_threshold` — влияет на объем детекций и нагрузку последующей логики;
+- количество одновременно отрисовываемых карточек в multi-source monitoring;
+- выбранный layout mode: `Фокус` и `Сетка 2x2` устойчивее при ограниченных ресурсах;
 - `reconnect_interval` — интервал повторной попытки подключения к источнику;
 - `source_timeout` — ориентир для контроля актуальности видеопотока;
 - `event_cooldown` — окно для подавления слишком частых доменных событий.
+
+## Тестирование и smoke-checklist
+
+Автотесты:
+
+```bash
+.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+```
+
+Покрытые сценарии:
+
+- нормализация и проверка подключений источников;
+- переключение `EmployeeRepository` и fallback cache;
+- mapping статусов идентификации;
+- helper-логика multi-source selection и live-window source params;
+- reconnect logic worker;
+- suppression дублей событий по track flags.
+
+Smoke-checklist:
+
+1. Запустить `streamlit run app.py`.
+2. В отдельном терминале запустить `python run_worker.py`.
+3. В `Онлайн-мониторинге` выбрать несколько источников и режим `Сетка 2x2`.
+4. Назначить главный источник и открыть его в отдельном окне.
+5. Проверить, что production-источник обновляет snapshot, а browser/local источник поднимает live mode.
+6. В разделе `Сотрудники` проверить источник данных, sync status, last update и ошибки синхронизации.
+7. В `Журнале событий` убедиться, что новые события содержат корректный `identification_status`.
 
 ## Сценарий демонстрации
 

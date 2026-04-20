@@ -119,7 +119,12 @@ def init_db():
             department TEXT,
             position TEXT,
             status TEXT,
-            created_at REAL
+            created_at REAL,
+            external_id TEXT,
+            source_system TEXT,
+            reference_image_url TEXT,
+            reference_count INTEGER DEFAULT 0,
+            last_synced_at REAL
         )
         """
     )
@@ -204,6 +209,19 @@ def init_db():
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS employee_sync_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            data_source TEXT,
+            sync_status TEXT,
+            last_synced_at REAL,
+            last_error TEXT,
+            cache_mode TEXT,
+            updated_at REAL
+        )
+        """
+    )
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS worker_status (
             source_id INTEGER PRIMARY KEY,
             status TEXT,
@@ -245,6 +263,18 @@ def init_db():
     )
     _ensure_columns(
         conn,
+        "employee_sync_state",
+        [
+            ("data_source", "data_source TEXT"),
+            ("sync_status", "sync_status TEXT"),
+            ("last_synced_at", "last_synced_at REAL"),
+            ("last_error", "last_error TEXT"),
+            ("cache_mode", "cache_mode TEXT"),
+            ("updated_at", "updated_at REAL"),
+        ],
+    )
+    _ensure_columns(
+        conn,
         "worker_status",
         [
             ("status", "status TEXT"),
@@ -280,6 +310,11 @@ def init_db():
             ("position", "position TEXT"),
             ("status", "status TEXT"),
             ("created_at", "created_at REAL"),
+            ("external_id", "external_id TEXT"),
+            ("source_system", "source_system TEXT"),
+            ("reference_image_url", "reference_image_url TEXT"),
+            ("reference_count", "reference_count INTEGER DEFAULT 0"),
+            ("last_synced_at", "last_synced_at REAL"),
         ],
     )
     _ensure_columns(
@@ -633,7 +668,18 @@ def load_employees():
     conn = get_db_conn()
     rows = conn.execute(
         """
-        SELECT id, full_name, department, position, status, created_at
+        SELECT
+            id,
+            full_name,
+            department,
+            position,
+            status,
+            created_at,
+            external_id,
+            source_system,
+            reference_image_url,
+            reference_count,
+            last_synced_at
         FROM employees
         ORDER BY full_name ASC
         """
@@ -659,8 +705,8 @@ def create_employee(*, full_name: str, department: str, position: str, status: s
     conn = get_db_conn()
     conn.execute(
         """
-        INSERT INTO employees (full_name, department, position, status, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO employees (full_name, department, position, status, created_at, source_system, reference_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             full_name.strip(),
@@ -668,6 +714,8 @@ def create_employee(*, full_name: str, department: str, position: str, status: s
             position.strip(),
             status.strip(),
             time.time(),
+            "local",
+            0,
         ),
     )
     conn.commit()
@@ -724,14 +772,14 @@ def ensure_demo_employees():
         return False
 
     demo_rows = [
-        ("Иванов Иван Иванович", "Служба эксплуатации", "Инженер", "active", time.time()),
-        ("Петров Петр Сергеевич", "Отдел безопасности", "Оператор", "active", time.time()),
-        ("Сидорова Анна Викторовна", "Администрация", "Менеджер", "inactive", time.time()),
+        ("Иванов Иван Иванович", "Служба эксплуатации", "Инженер", "active", time.time(), "local", 0),
+        ("Петров Петр Сергеевич", "Отдел безопасности", "Оператор", "active", time.time(), "local", 0),
+        ("Сидорова Анна Викторовна", "Администрация", "Менеджер", "inactive", time.time(), "local", 0),
     ]
     conn.executemany(
         """
-        INSERT INTO employees (full_name, department, position, status, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO employees (full_name, department, position, status, created_at, source_system, reference_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         demo_rows,
     )
@@ -823,6 +871,81 @@ def load_video_sources():
     ).fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+def replace_employee_cache(employees: list[dict], *, source_system: str, synced_at=None):
+    conn = get_db_conn()
+    synced_at = synced_at or time.time()
+    conn.execute("DELETE FROM employees")
+    conn.execute("DELETE FROM sqlite_sequence WHERE name = 'employees'")
+    rows = []
+    for employee in employees:
+        rows.append(
+            (
+                employee.get("full_name", "").strip(),
+                employee.get("department", "").strip(),
+                employee.get("position", "").strip(),
+                employee.get("status", "").strip() or "active",
+                employee.get("created_at") or synced_at,
+                employee.get("external_id"),
+                source_system,
+                employee.get("reference_image_url"),
+                int(employee.get("reference_count") or 0),
+                synced_at,
+            )
+        )
+    conn.executemany(
+        """
+        INSERT INTO employees (
+            full_name, department, position, status, created_at,
+            external_id, source_system, reference_image_url, reference_count, last_synced_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_employee_sync_state():
+    conn = get_db_conn()
+    row = conn.execute(
+        """
+        SELECT data_source, sync_status, last_synced_at, last_error, cache_mode, updated_at
+        FROM employee_sync_state
+        WHERE id = 1
+        """
+    ).fetchone()
+    conn.close()
+    return dict(row) if row is not None else None
+
+
+def upsert_employee_sync_state(
+    *,
+    data_source: str,
+    sync_status: str,
+    last_synced_at=None,
+    last_error: str = "",
+    cache_mode: str = "read_write",
+):
+    conn = get_db_conn()
+    conn.execute(
+        """
+        INSERT INTO employee_sync_state (
+            id, data_source, sync_status, last_synced_at, last_error, cache_mode, updated_at
+        ) VALUES (1, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            data_source = excluded.data_source,
+            sync_status = excluded.sync_status,
+            last_synced_at = excluded.last_synced_at,
+            last_error = excluded.last_error,
+            cache_mode = excluded.cache_mode,
+            updated_at = excluded.updated_at
+        """,
+        (data_source, sync_status, last_synced_at, last_error, cache_mode, time.time()),
+    )
+    conn.commit()
+    conn.close()
 
 
 def load_active_video_sources():

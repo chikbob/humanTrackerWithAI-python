@@ -65,6 +65,14 @@ def render_system_settings(
                     value=int(settings.get("source_timeout", 15)),
                     step=5,
                 )
+                employee_sync_interval = st.slider(
+                    "employee sync interval, sec",
+                    min_value=0,
+                    max_value=3600,
+                    value=int(settings.get("employee_sync_interval", 300)),
+                    step=30,
+                    help="0 отключает автоматическую синхронизацию справочника сотрудников.",
+                )
             with col3:
                 model_name = st.selectbox(
                     "active model",
@@ -87,6 +95,7 @@ def render_system_settings(
             set_system_setting_fn(key="event_cooldown", value=str(event_cooldown))
             set_system_setting_fn(key="reconnect_interval", value=str(reconnect_interval))
             set_system_setting_fn(key="source_timeout", value=str(source_timeout))
+            set_system_setting_fn(key="employee_sync_interval", value=str(employee_sync_interval))
             set_system_setting_fn(key="model_name", value=model_name)
             set_system_setting_fn(key="debug_mode", value="1" if debug_mode else "0")
             if point_options:

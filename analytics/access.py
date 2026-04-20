@@ -135,3 +135,45 @@ def build_source_status_rows(sources: list[dict], statuses: list[dict]) -> list[
             }
         )
     return rows
+
+
+def build_monitoring_source_cards(
+    sources: list[dict],
+    statuses: list[dict],
+    events: list[dict],
+    *,
+    interval_seconds: int = 300,
+) -> list[dict]:
+    now_ts = datetime.now().timestamp()
+    statuses_by_id = {status["source_id"]: status for status in statuses}
+    recent_event_counter = Counter()
+    for event in events:
+        source_id = event.get("source_id")
+        if source_id is None or not event.get("timestamp"):
+            continue
+        if now_ts - float(event["timestamp"]) <= interval_seconds:
+            recent_event_counter[source_id] += 1
+
+    cards = []
+    for source in sources:
+        status = statuses_by_id.get(source["id"], {})
+        status_name = status.get("status") or ("online" if status.get("is_connected") else "offline")
+        if status_name == "offline" and status.get("reconnect_count"):
+            status_name = "reconnecting"
+        cards.append(
+            {
+                "source_id": source["id"],
+                "name": source["name"],
+                "source_type": source["source_type"],
+                "status": status_name,
+                "is_connected": bool(status.get("is_connected")),
+                "fps": round(status.get("fps") or 0.0, 2),
+                "last_frame_at": status.get("last_frame_at"),
+                "last_snapshot_path": status.get("last_snapshot_path"),
+                "last_error": status.get("last_error") or "",
+                "recent_event_count": recent_event_counter.get(source["id"], 0),
+                "location": source.get("location") or "",
+                "is_active": bool(source.get("is_active")),
+            }
+        )
+    return cards

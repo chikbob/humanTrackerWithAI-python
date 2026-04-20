@@ -7,6 +7,7 @@ import cv2
 
 def normalize_source_url(source_type: str, source_url: str):
     """Convert source input into a cv2.VideoCapture-compatible value."""
+    source_url = str(source_url or "").strip()
     if source_type == "usb_camera":
         try:
             return int(source_url)
@@ -24,7 +25,7 @@ def test_video_source_connection(source_type: str, source_url: str, timeout_fram
     normalized_source = normalize_source_url(source_type, source_url)
     cap = cv2.VideoCapture(normalized_source)
     if not cap.isOpened():
-        return False, "Источник не открылся."
+        return False, "Источник не открылся. Проверьте URL, учетные данные и доступность камеры."
 
     success = False
     for _ in range(timeout_frames):
@@ -35,4 +36,4 @@ def test_video_source_connection(source_type: str, source_url: str, timeout_fram
     cap.release()
     if success:
         return True, "Подключение успешно."
-    return False, "Источник открылся, но кадры не поступают."
+    return False, "Источник открылся, но кадры не поступают. Возможен таймаут, неверный транспорт или нестабильный поток."

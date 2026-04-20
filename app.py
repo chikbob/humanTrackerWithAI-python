@@ -15,19 +15,24 @@ from db.repository import (
     ensure_demo_employees,
     init_db,
     load_access_points,
-    load_employees,
     load_events,
     load_history_from_db,
+    load_employee_sync_state,
+    load_employees,
     load_system_settings,
     load_video_sources,
     load_worker_statuses,
+    replace_employee_cache,
     reset_and_seed_demo_data,
     set_system_setting,
     set_video_source_active,
+    upsert_employee_sync_state,
     update_employee,
     update_employee_status,
     update_video_source,
 )
+from services.employee_repository import build_employee_repository
+from services.employee_sync import build_identity_gallery_state, maybe_sync_employee_directory
 from services.source_service import test_video_source_connection
 from services.state import init_session_state
 from ui.analytics_views import render_access_analytics
@@ -48,6 +53,8 @@ def main():
     query_params = st.query_params
     standalone_live_mode = query_params.get("view", "") == "live-window"
     preferred_live_source = query_params.get("source", "")
+    preferred_live_source_id = query_params.get("source_id", "")
+    preferred_live_source_kind = query_params.get("source_kind", "")
     if standalone_live_mode:
         st.markdown(
             """
@@ -91,7 +98,24 @@ def main():
             ensure_demo_employees()
 
     access_points = load_access_points()
-    employees = load_employees()
+    employee_repository = build_employee_repository(
+        load_employees_fn=load_employees,
+        replace_cache_fn=replace_employee_cache,
+        load_sync_state_fn=load_employee_sync_state,
+        upsert_sync_state_fn=upsert_employee_sync_state,
+    )
+    employee_sync_state = employee_repository.get_status()
+    auto_sync_interval = int(system_settings.get("employee_sync_interval", 300))
+    sync_triggered, employee_sync_state = maybe_sync_employee_directory(
+        employee_repository,
+        employee_sync_state,
+        interval_seconds=auto_sync_interval,
+    )
+    employees = employee_repository.list_employees()
+    if sync_triggered:
+        employee_sync_state = employee_repository.get_status()
+        employees = employee_repository.list_employees()
+    st.session_state.identity_gallery_state = build_identity_gallery_state(employees, employee_sync_state)
     worker_statuses = load_worker_statuses()
     raw_events = load_events(limit=5000)
     events = enrich_event_rows(raw_events, video_sources, worker_statuses)
@@ -144,12 +168,18 @@ def main():
             db_upsert_session=db_upsert_session,
             demo_mode=sidebar_state["demo_mode"],
             preferred_source=preferred_live_source,
+            preferred_source_id=preferred_live_source_id,
+            preferred_source_kind=preferred_live_source_kind,
             standalone_mode=standalone_live_mode,
         )
     elif section == "Сотрудники":
         render_employees(
             st,
             employees=employees,
+            sync_state=employee_sync_state,
+            employee_data_source=employee_repository.source_name,
+            employee_directory_read_only=employee_repository.is_read_only(),
+            sync_employee_directory_fn=employee_repository.sync,
             create_employee_fn=create_employee,
             update_employee_fn=update_employee,
             update_employee_status_fn=update_employee_status,

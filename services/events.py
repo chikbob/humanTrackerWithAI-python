@@ -41,7 +41,8 @@ def create_persisted_event(
     identification_status: Optional[str] = None,
 ):
     """Persist either a raw CV event or a domain event into the unified event journal."""
-    identity_result = get_identity_placeholder_result()
+    identity_state = getattr(session_state, "identity_gallery_state", None)
+    identity_result = get_identity_placeholder_result(identity_state)
     event = {
         "event_id": str(uuid.uuid4())[:8],
         "session_id": session["id"],

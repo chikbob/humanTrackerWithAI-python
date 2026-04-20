@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
+from analytics.access import build_monitoring_source_cards
 from config.rtc_config import build_rtc_configuration
 from core.detection import track_and_draw_live
 from services.events import add_notification, process_disappeared_tracks, register_detection_and_entry_events
@@ -60,45 +61,71 @@ def render_online_monitoring(
     db_upsert_session,
     demo_mode: bool,
     preferred_source: str = "",
+    preferred_source_id: str = "",
+    preferred_source_kind: str = "",
     standalone_mode: bool = False,
 ):
     statuses_by_id = {status["source_id"]: status for status in worker_statuses}
-    source_options = []
-    source_map = {}
-    for source in active_sources:
-        label = f"{source['name']} [{source['source_type']}]"
-        source_options.append(label)
-        source_kind = "browser_camera" if source["source_type"] == "browser_camera" else "production"
-        source_map[label] = {"kind": source_kind, "source": source}
-    browser_option = "Браузерная камера"
-    local_camera_option = "Локальная камера MacBook"
-    if browser_option not in source_options:
-        source_options.append(browser_option)
-        source_map[browser_option] = {"kind": "browser_camera", "source": None}
-    if local_camera_option not in source_options:
-        source_options.append(local_camera_option)
-        source_map[local_camera_option] = {"kind": "local_camera", "source": None}
-    if not source_options:
-        source_options = [browser_option, local_camera_option]
-        source_map[browser_option] = {"kind": "browser_camera", "source": None}
-        source_map[local_camera_option] = {"kind": "local_camera", "source": None}
+    source_bindings = _build_source_bindings(active_sources, statuses_by_id)
+    source_cards = {
+        card["source_id"]: card
+        for card in build_monitoring_source_cards(active_sources, worker_statuses, events)
+    }
+    selectable_labels = [binding["label"] for binding in source_bindings]
+    if not selectable_labels:
+        st.warning("Нет доступных источников для мониторинга.")
+        return
 
-    default_index = 0
-    if preferred_source == "browser_camera" and browser_option in source_options:
-        default_index = source_options.index(browser_option)
-    selected_option = st.selectbox(
-        "Источник live monitoring",
-        options=source_options,
-        index=default_index,
-        help="Можно переключаться между активным production-источником и браузерной камерой.",
+    standalone_binding = _resolve_standalone_binding(
+        source_bindings,
+        preferred_source=preferred_source,
+        preferred_source_id=preferred_source_id,
+        preferred_source_kind=preferred_source_kind,
     )
-    selected_binding = source_map[selected_option]
-    selected_source = selected_binding["source"]
-    selected_status = statuses_by_id.get(selected_source["id"], {}) if selected_source else {}
-    if selected_binding["kind"] == "local_camera":
-        selected_last_frame_at = session_state.get("local_camera_last_frame_at")
+    if standalone_mode:
+        selected_bindings = [standalone_binding] if standalone_binding else [source_bindings[0]]
     else:
-        selected_last_frame_at = selected_status.get("last_frame_at")
+        default_selection = _resolve_default_selection(source_bindings, preferred_source, preferred_source_id)
+        selected_labels = st.multiselect(
+            "Источники онлайн-мониторинга",
+            options=selectable_labels,
+            default=default_selection,
+            help="Production-источники отображаются через snapshots worker. Browser/local режимы активируются как foreground live-source.",
+        )
+        if not selected_labels:
+            selected_labels = default_selection
+        selected_bindings = [binding for binding in source_bindings if binding["label"] in selected_labels]
+
+    layout_mode = "single"
+    primary_binding = selected_bindings[0]
+    if not standalone_mode:
+        control_col1, control_col2, control_col3 = st.columns([1.6, 1.0, 1.2])
+        with control_col1:
+            layout_mode = st.selectbox(
+                "Режим отображения",
+                options=["single", "2x2 grid", "list", "auto layout"],
+                format_func=lambda value: {
+                    "single": "Фокус",
+                    "2x2 grid": "Сетка 2x2",
+                    "list": "Список",
+                    "auto layout": "Авто-компоновка",
+                }[value],
+            )
+        with control_col2:
+            primary_label = st.selectbox(
+                "Главный источник",
+                options=[binding["label"] for binding in selected_bindings],
+                index=0,
+            )
+            primary_binding = next(binding for binding in selected_bindings if binding["label"] == primary_label)
+        with control_col3:
+            st.metric("Одновременных карточек", min(len(selected_bindings), _max_rendered_sources(layout_mode)))
+        selected_bindings = _prioritize_primary_binding(selected_bindings, primary_binding)
+
+    selected_binding = primary_binding
+    selected_source = selected_binding["source"]
+    selected_status = selected_binding["status"]
+    selected_last_frame_at = _resolve_binding_last_frame_at(selected_binding, session_state)
 
     if standalone_mode:
         _render_standalone_live_window(
@@ -120,73 +147,46 @@ def render_online_monitoring(
         )
         return
 
-    left_col, right_col = st.columns([1.9, 1.0], gap="large")
+    render_limit = _max_rendered_sources(layout_mode)
+    displayed_bindings = selected_bindings[:render_limit]
+    if len(selected_bindings) > render_limit:
+        st.info(
+            f"Для стабильной работы отображаются первые {render_limit} источника. "
+            f"Главный источник всегда имеет приоритет."
+        )
+
+    left_col, right_col = st.columns([2.2, 0.9], gap="large")
 
     with left_col:
         with st.container(border=True):
-            st.subheader("Live monitoring")
+            st.subheader("Онлайн-мониторинг входной зоны")
             if not standalone_mode:
-                live_window_url = f"?view=live-window&source={'browser_camera' if selected_binding['kind'] == 'browser_camera' else 'production'}"
+                live_window_url = _build_live_window_url(selected_binding)
                 st.markdown(
                     f'<a href="{live_window_url}" target="_blank" rel="noopener noreferrer">Открыть live monitoring в отдельном окне</a>',
                     unsafe_allow_html=True,
                 )
-            if selected_binding["kind"] == "production" and selected_source is not None:
-                snapshot_path = selected_status.get("last_snapshot_path")
-                if snapshot_path and Path(snapshot_path).exists():
-                    st.image(snapshot_path, use_container_width=True, caption=f"Входная зона: {selected_source['name']}")
-                else:
-                    st.info("Фоновый worker подключен, но изображение еще не получено.")
-                st.caption(
-                    "ROI входной зоны и детекции сотрудников отрисовываются серверным worker "
-                    "и поступают в интерфейс через БД и runtime snapshots."
-                )
-            elif selected_binding["kind"] == "browser_camera":
-                st.caption(
-                    "Браузерная камера работает через браузер пользователя и передает live-stream "
-                    "в основной блок мониторинга."
-                )
-                browser_last_frame_at = _render_browser_camera_monitor(
-                    st,
-                    source_label=selected_source["name"] if selected_source is not None else "Браузерная камера",
-                    model_name=model_name,
-                    model=model,
-                    class_meta=class_meta,
-                    inference_size=inference_size,
-                    conf_threshold=conf_threshold,
-                    session_state=session_state,
-                    db_insert_event=db_insert_event,
-                    db_insert_frame=db_insert_frame,
-                    db_upsert_session=db_upsert_session,
-                )
-                if browser_last_frame_at is not None:
-                    selected_last_frame_at = browser_last_frame_at
-            elif selected_binding["kind"] == "local_camera":
-                st.caption(
-                    "Локальная камера использует встроенную камеру устройства через OpenCV и подходит для "
-                    "непрерывного all-time мониторинга на MacBook."
-                )
-                local_last_frame_at = _render_local_camera_monitor(
-                    st,
-                    model_name=model_name,
-                    model=model,
-                    class_meta=class_meta,
-                    inference_size=inference_size,
-                    conf_threshold=conf_threshold,
-                    frame_skip=frame_skip,
-                    session_state=session_state,
-                    db_insert_event=db_insert_event,
-                    db_insert_frame=db_insert_frame,
-                    db_upsert_session=db_upsert_session,
-                    standalone_mode=False,
-                )
-                if local_last_frame_at is not None:
-                    selected_last_frame_at = local_last_frame_at
-            else:
-                st.warning(
-                    "Нет активных production-источников. Добавьте RTSP/IP/USB источник в разделе "
-                    "«Источники видео» или переключитесь на браузерную камеру."
-                )
+            st.caption(
+                "Production-источники поступают из worker runtime. Browser/local источники доступны как foreground live mode "
+                "и не дублируют server-side pipeline."
+            )
+            _render_source_layout(
+                st,
+                bindings=displayed_bindings,
+                primary_binding=primary_binding,
+                source_cards=source_cards,
+                model_name=model_name,
+                model=model,
+                class_meta=class_meta,
+                inference_size=inference_size,
+                conf_threshold=conf_threshold,
+                frame_skip=frame_skip,
+                session_state=session_state,
+                db_insert_event=db_insert_event,
+                db_insert_frame=db_insert_frame,
+                db_upsert_session=db_upsert_session,
+                layout_mode=layout_mode,
+            )
 
         with st.container(border=True):
             st.subheader("Последние события входной зоны")
@@ -231,6 +231,23 @@ def render_online_monitoring(
             st.metric("Последний кадр", _fmt_ts(selected_last_frame_at))
             if selected_status.get("last_error"):
                 st.error(selected_status["last_error"])
+        with st.container(border=True):
+            st.subheader("Статусы источников")
+            for binding in displayed_bindings:
+                card = source_cards.get(binding.get("source_id"), {})
+                st.markdown(
+                    _render_source_status_badge(
+                        title=binding["name"],
+                        source_type=binding["kind_label"],
+                        status=card.get("status") or binding["status"].get("status", "offline"),
+                        fps=card.get("fps"),
+                        last_frame_at=_fmt_ts(_resolve_binding_last_frame_at(binding, session_state)),
+                        recent_event_count=card.get("recent_event_count", 0),
+                        error_text=card.get("last_error") or "",
+                        live_window_url=_build_live_window_url(binding),
+                    ),
+                    unsafe_allow_html=True,
+                )
 
     if not standalone_mode:
         with st.expander("Демо и fallback режимы", expanded=demo_mode):
@@ -251,6 +268,281 @@ def render_online_monitoring(
                 db_insert_frame=db_insert_frame,
                 db_upsert_session=db_upsert_session,
             )
+
+
+def _build_source_bindings(active_sources: list[dict], statuses_by_id: dict) -> list[dict]:
+    bindings = []
+    for source in active_sources:
+        binding_kind = "browser_camera" if source["source_type"] == "browser_camera" else "production"
+        bindings.append(
+            {
+                "source_id": source["id"],
+                "kind": binding_kind,
+                "kind_label": source["source_type"],
+                "source": source,
+                "status": statuses_by_id.get(source["id"], {}),
+                "name": source["name"],
+                "label": f"{source['name']} [{source['source_type']}]",
+            }
+        )
+    bindings.append(
+        {
+            "source_id": "browser-live",
+            "kind": "browser_camera",
+            "kind_label": "browser_camera",
+            "source": None,
+            "status": {},
+            "name": "Браузерная камера",
+            "label": "Браузерная камера",
+        }
+    )
+    bindings.append(
+        {
+            "source_id": "local-macbook",
+            "kind": "local_camera",
+            "kind_label": "local_camera",
+            "source": None,
+            "status": {},
+            "name": "Локальная камера MacBook",
+            "label": "Локальная камера MacBook",
+        }
+    )
+    return bindings
+
+
+def _resolve_default_selection(source_bindings: list[dict], preferred_source: str, preferred_source_id: str) -> list[str]:
+    if preferred_source_id:
+        for binding in source_bindings:
+            if str(binding["source_id"]) == str(preferred_source_id):
+                return [binding["label"]]
+    if preferred_source == "browser_camera":
+        for binding in source_bindings:
+            if binding["kind"] == "browser_camera":
+                return [binding["label"]]
+    return [source_bindings[0]["label"]]
+
+
+def _resolve_standalone_binding(source_bindings: list[dict], *, preferred_source: str, preferred_source_id: str, preferred_source_kind: str):
+    if preferred_source_id:
+        for binding in source_bindings:
+            if str(binding["source_id"]) == str(preferred_source_id):
+                return binding
+    if preferred_source_kind:
+        for binding in source_bindings:
+            if binding["kind"] == preferred_source_kind:
+                return binding
+    if preferred_source:
+        for binding in source_bindings:
+            if binding["kind"] == preferred_source or binding["label"] == preferred_source:
+                return binding
+    return source_bindings[0] if source_bindings else None
+
+
+def _prioritize_primary_binding(bindings: list[dict], primary_binding: dict) -> list[dict]:
+    return [primary_binding] + [binding for binding in bindings if binding["label"] != primary_binding["label"]]
+
+
+def _resolve_binding_last_frame_at(binding: dict, session_state):
+    if binding["kind"] == "local_camera":
+        return session_state.get("local_camera_last_frame_at")
+    if binding["kind"] == "browser_camera":
+        return session_state.get("browser_camera_last_frame_at")
+    return binding.get("status", {}).get("last_frame_at")
+
+
+def _max_rendered_sources(layout_mode: str) -> int:
+    if layout_mode == "single":
+        return 1
+    if layout_mode == "2x2 grid":
+        return 4
+    if layout_mode == "list":
+        return 6
+    return 4
+
+
+def _build_live_window_url(binding: dict) -> str:
+    return (
+        f"?view=live-window&source={binding['kind']}"
+        f"&source_id={binding['source_id']}&source_kind={binding['kind']}"
+    )
+
+
+def _render_source_layout(
+    st,
+    *,
+    bindings: list[dict],
+    primary_binding: dict,
+    source_cards: dict,
+    model_name: str,
+    model,
+    class_meta: dict,
+    inference_size: int,
+    conf_threshold: float,
+    frame_skip: int,
+    session_state,
+    db_insert_event,
+    db_insert_frame,
+    db_upsert_session,
+    layout_mode: str,
+):
+    if layout_mode == "list":
+        for binding in bindings:
+            _render_source_tile(
+                st,
+                binding=binding,
+                source_card=source_cards.get(binding.get("source_id"), {}),
+                is_primary=binding["label"] == primary_binding["label"],
+                model_name=model_name,
+                model=model,
+                class_meta=class_meta,
+                inference_size=inference_size,
+                conf_threshold=conf_threshold,
+                frame_skip=frame_skip,
+                session_state=session_state,
+                db_insert_event=db_insert_event,
+                db_insert_frame=db_insert_frame,
+                db_upsert_session=db_upsert_session,
+            )
+        return
+
+    if layout_mode == "2x2 grid":
+        columns = st.columns(2, gap="medium")
+        for index, binding in enumerate(bindings[:4]):
+            with columns[index % 2]:
+                _render_source_tile(
+                    st,
+                    binding=binding,
+                    source_card=source_cards.get(binding.get("source_id"), {}),
+                    is_primary=binding["label"] == primary_binding["label"],
+                    model_name=model_name,
+                    model=model,
+                    class_meta=class_meta,
+                    inference_size=inference_size,
+                    conf_threshold=conf_threshold,
+                    frame_skip=frame_skip,
+                    session_state=session_state,
+                    db_insert_event=db_insert_event,
+                    db_insert_frame=db_insert_frame,
+                    db_upsert_session=db_upsert_session,
+                )
+        return
+
+    for binding in bindings[:1 if layout_mode == "single" else len(bindings)]:
+        _render_source_tile(
+            st,
+            binding=binding,
+            source_card=source_cards.get(binding.get("source_id"), {}),
+            is_primary=binding["label"] == primary_binding["label"],
+            model_name=model_name,
+            model=model,
+            class_meta=class_meta,
+            inference_size=inference_size,
+            conf_threshold=conf_threshold,
+            frame_skip=frame_skip,
+            session_state=session_state,
+            db_insert_event=db_insert_event,
+            db_insert_frame=db_insert_frame,
+            db_upsert_session=db_upsert_session,
+        )
+
+
+def _render_source_tile(
+    st,
+    *,
+    binding: dict,
+    source_card: dict,
+    is_primary: bool,
+    model_name: str,
+    model,
+    class_meta: dict,
+    inference_size: int,
+    conf_threshold: float,
+    frame_skip: int,
+    session_state,
+    db_insert_event,
+    db_insert_frame,
+    db_upsert_session,
+):
+    with st.container(border=True):
+        badge = "Главный источник" if is_primary else "Дополнительный источник"
+        st.markdown(f"**{binding['name']}**  \n`{binding['kind_label']}` • {badge}")
+        if binding["kind"] == "production" and binding["source"] is not None:
+            snapshot_path = binding["status"].get("last_snapshot_path")
+            if snapshot_path and Path(snapshot_path).exists():
+                st.image(snapshot_path, use_container_width=True)
+            else:
+                st.info("Worker еще не сохранил snapshot для этого источника.")
+            if source_card.get("last_error"):
+                st.caption(f"Ошибка: {source_card['last_error']}")
+            return
+
+        if not is_primary:
+            st.info(
+                "Интерактивные browser/local источники рендерятся только для главного окна. "
+                "Для этого источника используйте «Открыть отдельно»."
+            )
+            return
+
+        if binding["kind"] == "browser_camera":
+            _render_browser_camera_monitor(
+                st,
+                source_label=binding["name"],
+                model_name=model_name,
+                model=model,
+                class_meta=class_meta,
+                inference_size=inference_size,
+                conf_threshold=conf_threshold,
+                session_state=session_state,
+                db_insert_event=db_insert_event,
+                db_insert_frame=db_insert_frame,
+                db_upsert_session=db_upsert_session,
+            )
+            return
+
+        if binding["kind"] == "local_camera":
+            _render_local_camera_monitor(
+                st,
+                model_name=model_name,
+                model=model,
+                class_meta=class_meta,
+                inference_size=inference_size,
+                conf_threshold=conf_threshold,
+                frame_skip=frame_skip,
+                session_state=session_state,
+                db_insert_event=db_insert_event,
+                db_insert_frame=db_insert_frame,
+                db_upsert_session=db_upsert_session,
+                standalone_mode=False,
+            )
+            return
+
+
+def _render_source_status_badge(*, title: str, source_type: str, status: str, fps, last_frame_at: str, recent_event_count: int, error_text: str, live_window_url: str) -> str:
+    status_colors = {
+        "online": "#10b981",
+        "reconnecting": "#f59e0b",
+        "offline": "#ef4444",
+    }
+    status_color = status_colors.get(status, "#94a3b8")
+    error_html = f"<div style='margin-top:6px;color:#fca5a5'>{error_text}</div>" if error_text else ""
+    return f"""
+    <div style="border:1px solid rgba(148,163,184,.18);border-radius:16px;padding:12px 14px;margin-bottom:10px;background:rgba(15,23,42,.35);">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+            <div>
+                <div style="font-weight:600;color:#e2e8f0;">{title}</div>
+                <div style="font-size:12px;color:#94a3b8;">{source_type}</div>
+            </div>
+            <span style="padding:4px 10px;border-radius:999px;background:{status_color};color:#fff;font-size:12px;">{status}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px;font-size:12px;color:#cbd5e1;">
+            <div>FPS: {fps if fps not in (None, '') else '—'}</div>
+            <div>События: {recent_event_count}</div>
+            <div>Последний кадр: {last_frame_at}</div>
+            <div><a href="{live_window_url}" target="_blank" rel="noopener noreferrer">Открыть отдельно</a></div>
+        </div>
+        {error_html}
+    </div>
+    """
 
 
 def _render_standalone_live_window(
