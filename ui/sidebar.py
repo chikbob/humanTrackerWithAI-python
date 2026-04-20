@@ -22,18 +22,18 @@ ROTATION_MAP = {"0°": 0, "90° вправо": 90, "180°": 180, "90° влев�
 
 
 def render_primary_sidebar(st):
-    st.sidebar.header("⚙️ Параметры системы")
-    model_choice = st.sidebar.selectbox("Модель YOLO", options=MODEL_OPTIONS, index=1)
+    st.sidebar.header("⚙️ Параметры проходной")
+    model_choice = st.sidebar.selectbox("Модель анализа видеопотока", options=MODEL_OPTIONS, index=1)
     source_mode = st.sidebar.radio(
-        "Источник данных",
+        "Источник данных входной зоны",
         options=["📷 Веб-камера", "📁 Загрузить фото", "🎞️ Загрузить видео"],
         index=0,
     )
-    show_advanced = st.sidebar.checkbox("Расширенные настройки", value=False)
-    rotation_choice = st.sidebar.selectbox("Поворот изображения", ROTATION_OPTIONS, index=0)
-    conf_threshold = st.sidebar.slider("Порог confidence", 0.1, 0.95, 0.5, 0.05)
-    notify_conf_threshold = st.sidebar.slider("Порог уведомлений", 0.1, 0.95, 0.5, 0.05)
-    enable_notifications = st.sidebar.checkbox("Включить уведомления", value=True)
+    show_advanced = st.sidebar.checkbox("Показать расширенные настройки", value=False)
+    rotation_choice = st.sidebar.selectbox("Поворот изображения камеры", ROTATION_OPTIONS, index=0)
+    conf_threshold = st.sidebar.slider("Порог уверенности детекции", 0.1, 0.95, 0.5, 0.05)
+    notify_conf_threshold = st.sidebar.slider("Порог уведомлений проходной", 0.1, 0.95, 0.5, 0.05)
+    enable_notifications = st.sidebar.checkbox("Включить уведомления дежурному", value=True)
     st.session_state.rotation_angle = ROTATION_MAP[rotation_choice]
     return {
         "model_choice": model_choice,
@@ -50,10 +50,10 @@ def render_detection_sidebar(st, all_class_names: list[str], show_advanced: bool
     notify_classes = st.sidebar.multiselect(
         "Классы для уведомлений",
         options=all_class_names,
-        default=[cls for cls in ["person", "keyboard", "mouse", "bottle"] if cls in all_class_names],
+        default=[cls for cls in ["person"] if cls in all_class_names],
     )
     st.sidebar.markdown("---")
-    st.sidebar.caption("Шаги: выберите источник -> нажмите старт/загрузите файл -> смотрите события.")
+    st.sidebar.caption("Порядок работы: выберите источник входной зоны, запустите анализ и просматривайте журнал проходов.")
 
     animal_filter = "всё"
     track_classes = []
@@ -66,33 +66,33 @@ def render_detection_sidebar(st, all_class_names: list[str], show_advanced: bool
     rule_disappear_seconds = 5
 
     if show_advanced:
-        st.sidebar.subheader("Расширенные фильтры")
+        st.sidebar.subheader("Фильтры видеопотока")
         animal_filter = st.sidebar.selectbox(
-            "Показывать только:",
+            "Показывать объекты:",
             options=["всё", "коты", "собаки", "птицы", "прочие"],
             index=0,
         )
         track_classes = st.sidebar.multiselect("Фильтр по классам", options=all_class_names, default=[])
 
-        st.sidebar.subheader("ROI и правила алертов")
-        enable_roi = st.sidebar.checkbox("Включить ROI", value=True)
-        roi_x = st.sidebar.slider("ROI X (%)", 0, 95, 20, 1)
-        roi_y = st.sidebar.slider("ROI Y (%)", 0, 95, 20, 1)
-        roi_w = st.sidebar.slider("ROI ширина (%)", 5, 100, 60, 1)
-        roi_h = st.sidebar.slider("ROI высота (%)", 5, 100, 60, 1)
+        st.sidebar.subheader("Входная зона и правила прохода")
+        enable_roi = st.sidebar.checkbox("Включить контроль входной зоны", value=True)
+        roi_x = st.sidebar.slider("Входная зона X (%)", 0, 95, 20, 1)
+        roi_y = st.sidebar.slider("Входная зона Y (%)", 0, 95, 20, 1)
+        roi_w = st.sidebar.slider("Ширина входной зоны (%)", 5, 100, 60, 1)
+        roi_h = st.sidebar.slider("Высота входной зоны (%)", 5, 100, 60, 1)
 
         rule_count_enabled = st.sidebar.checkbox("Правило: N объектов класса X за T сек", value=True)
         rule_class = st.sidebar.selectbox(
-            "Класс X для правила N/T",
+            "Класс для правила N/T",
             options=all_class_names,
             index=all_class_names.index("person") if "person" in all_class_names else 0,
         )
-        rule_n = st.sidebar.number_input("N объектов", min_value=1, max_value=100, value=3, step=1)
-        rule_t = st.sidebar.number_input("T секунд", min_value=1, max_value=600, value=10, step=1)
+        rule_n = st.sidebar.number_input("Количество объектов", min_value=1, max_value=100, value=3, step=1)
+        rule_t = st.sidebar.number_input("Интервал, сек", min_value=1, max_value=600, value=10, step=1)
 
-        rule_disappear_enabled = st.sidebar.checkbox("Правило: объект исчез > T сек", value=True)
+        rule_disappear_enabled = st.sidebar.checkbox("Правило: объект пропал > T сек", value=True)
         rule_disappear_seconds = st.sidebar.number_input(
-            "T секунд для исчезновения",
+            "Порог пропадания, сек",
             min_value=1,
             max_value=120,
             value=5,

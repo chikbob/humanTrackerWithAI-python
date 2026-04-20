@@ -10,45 +10,67 @@ from PIL import Image
 from utils.vision import compute_iou
 
 
-def render_status_panel(st, *, source_mode: str, model_name: str, conf_threshold: float, notify_conf_threshold: float, rotation_angle: int, animal_filter: str, track_classes: list[str], notifications: list[dict]):
+def render_status_panel(
+    st,
+    *,
+    source_mode: str,
+    model_name: str,
+    conf_threshold: float,
+    notify_conf_threshold: float,
+    rotation_angle: int,
+    animal_filter: str,
+    track_classes: list[str],
+    notifications: list[dict],
+):
     with st.container(border=True):
-        st.subheader("🧭 Быстрый статус")
-        st.write(f"Источник: **{source_mode}**")
-        st.write(f"Модель: **{model_name}**")
+        st.subheader("🧭 Состояние поста наблюдения")
+        st.write(f"Источник видеопотока: **{source_mode}**")
+        st.write(f"Модель анализа: **{model_name}**")
         st.write(f"Порог детекции: **{conf_threshold:.2f}**")
-        st.write(f"Порог уведомлений: **{notify_conf_threshold:.2f}**")
-        st.write(f"Угол поворота: **{rotation_angle}°**")
-        st.write(f"Фильтр животных: **{animal_filter}**")
-        st.write(f"Фильтр классов: **{', '.join(track_classes) if track_classes else 'все'}**")
+        st.write(f"Порог тревожных уведомлений: **{notify_conf_threshold:.2f}**")
+        st.write(f"Поворот изображения: **{rotation_angle}°**")
+        st.write(f"Фильтр объектов: **{animal_filter}**")
+        st.write(f"Контроль по классам: **{', '.join(track_classes) if track_classes else 'все объекты'}**")
 
     with st.container(border=True):
-        st.subheader("🔔 Алерты")
+        st.subheader("🔔 Оповещения проходной")
         if notifications:
             recent = notifications[-8:]
             for notification in reversed(recent):
                 ts = datetime.fromtimestamp(notification["timestamp"]).strftime("%H:%M:%S")
                 st.markdown(f"- `{ts}` {notification['text']}")
         else:
-            st.caption("Уведомлений пока нет.")
+            st.caption("Оповещений по входной зоне пока нет.")
 
 
-def render_analytics(st, *, sessions: list[dict], events: list[dict], notifications: list[dict], show_advanced: bool, model):
+def render_analytics(
+    st,
+    *,
+    sessions: list[dict],
+    events: list[dict],
+    notifications: list[dict],
+    show_advanced: bool,
+    model,
+    employees: list[dict],
+    access_logs: list[dict],
+):
     st.markdown("---")
-    st.subheader("📈 Панель мониторинга и аналитика")
+    st.subheader("📊 Оперативная панель предприятия")
 
     total_frames = sum(len(session["frames"]) for session in sessions)
     total_events = len(events)
-    class_counter = Counter(event["class_name"] for event in events)
-    top_class = class_counter.most_common(1)[0][0] if class_counter else "—"
+    total_domain_events = sum(1 for event in events if event.get("event_scope") == "domain")
+    top_event = Counter(event["event_type"] for event in events if event.get("event_scope") == "domain").most_common(1)
+    top_event_name = top_event[0][0] if top_event else "—"
 
     met1, met2, met3, met4 = st.columns(4)
-    met1.metric("Сеансов", len(sessions))
-    met2.metric("Кадров", total_frames)
-    met3.metric("Событий object detected", total_events)
-    met4.metric("Топ-класс", top_class)
+    met1.metric("Активных сеансов мониторинга", len(sessions))
+    met2.metric("Обработано кадров", total_frames)
+    met3.metric("Событий проходной", total_domain_events)
+    met4.metric("Основной тип события", top_event_name)
 
     if notifications:
-        with st.expander("🔔 Последние уведомления", expanded=False):
+        with st.expander("Последние уведомления поста наблюдения", expanded=False):
             notif_df = pd.DataFrame(
                 [
                     {
@@ -60,33 +82,40 @@ def render_analytics(st, *, sessions: list[dict], events: list[dict], notificati
             )
             st.dataframe(notif_df.iloc[::-1], use_container_width=True, hide_index=True)
 
+    tab_monitoring, tab_journal, tab_employees, tab_stats = st.tabs(
+        [
+            "Онлайн-мониторинг входной зоны",
+            "Журнал событий",
+            "Список сотрудников",
+            "Статистика проходов",
+        ]
+    )
+
+    with tab_monitoring:
+        _render_monitoring_tab(st, sessions)
+
+    with tab_journal:
+        _render_events_tab(st, events, access_logs, show_advanced)
+
+    with tab_employees:
+        _render_employees_tab(st, employees)
+
+    with tab_stats:
+        _render_access_stats_tab(st, events, access_logs)
+
     if show_advanced:
-        tab_sessions, tab_events, tab_export, tab_kpi = st.tabs(
-            ["Сеансы", "События и динамика", "Экспорт отчётов", "KPI модели"]
-        )
-    else:
-        tab_sessions, tab_events = st.tabs(["Сеансы", "События"])
-        tab_export = None
-        tab_kpi = None
-
-    with tab_sessions:
-        _render_sessions_tab(st, sessions)
-
-    with tab_events:
-        _render_events_tab(st, events, show_advanced)
-
-    if show_advanced and tab_export is not None:
-        with tab_export:
-            _render_export_tab(st, sessions, events)
-
-    if show_advanced and tab_kpi is not None:
-        with tab_kpi:
-            _render_kpi_tab(st, model)
+        with st.expander("Служебные разделы", expanded=False):
+            subtab_export, subtab_kpi = st.tabs(["Экспорт отчетов", "KPI модели"])
+            with subtab_export:
+                _render_export_tab(st, sessions, events)
+            with subtab_kpi:
+                _render_kpi_tab(st, model)
 
 
-def _render_sessions_tab(st, sessions: list[dict]):
+def _render_monitoring_tab(st, sessions: list[dict]):
+    st.markdown("**Онлайн-мониторинг входной зоны**")
     if not sessions:
-        st.info("Пока нет ни одного сеанса распознавания.")
+        st.info("Сеансы мониторинга входной зоны пока не запускались.")
         return
 
     sessions_summary = []
@@ -95,23 +124,21 @@ def _render_sessions_tab(st, sessions: list[dict]):
         finished = (
             datetime.fromtimestamp(session["finished_at"]).strftime("%Y-%m-%d %H:%M:%S")
             if session["finished_at"] is not None
-            else ""
+            else "идет наблюдение"
         )
         duration = session["finished_at"] - session["started_at"] if session["finished_at"] is not None else None
         sessions_summary.append(
             {
                 "№": idx,
-                "ID (сокр.)": session["id"][:8],
-                "Модель": session["model"],
+                "Сеанс": session["id"][:8],
                 "Источник": session["source_type"],
-                "Путь / камера": session["source_path"],
-                "Фильтр животных": session["animal_filter"],
-                "Фильтр классов": ", ".join(session["class_filter"]) if session["class_filter"] else "все",
-                "Кадров в сеансе": len(session["frames"]),
-                "Событий": session["events_count"],
+                "Камера / файл": session["source_path"],
+                "Модель": session["model"],
                 "Начало": started,
-                "Конец": finished,
-                "Длительность, с": round(duration, 2) if duration is not None else "",
+                "Завершение": finished,
+                "Длительность, сек": round(duration, 2) if duration is not None else "",
+                "Кадров": len(session["frames"]),
+                "Событий": session["events_count"],
             }
         )
 
@@ -119,16 +146,17 @@ def _render_sessions_tab(st, sessions: list[dict]):
     st.dataframe(df_sessions, use_container_width=True, hide_index=True)
 
     session_index = st.number_input(
-        "Выберите номер сеанса для детализации",
+        "Выберите сеанс мониторинга для детализации",
         min_value=1,
         max_value=len(sessions),
         value=len(sessions),
         step=1,
+        key="monitoring_session_index",
     )
     selected_session = sessions[session_index - 1]
     frames = selected_session["frames"]
     if not frames:
-        st.info("В выбранном сеансе нет кадров.")
+        st.info("В выбранном сеансе еще нет кадров.")
         return
 
     df_frames = pd.DataFrame(
@@ -136,10 +164,10 @@ def _render_sessions_tab(st, sessions: list[dict]):
             {
                 "Кадр": frame["frame_index"],
                 "Время кадра": datetime.fromtimestamp(frame["timestamp"]).strftime("%H:%M:%S"),
-                "Размер (W×H)": f"{frame['width']}×{frame['height']}",
-                "Угол": frame["rotation_angle"],
-                "Время обработки, мс": round(frame["processing_time_ms"], 2),
-                "Кол-во детекций": frame["detections_count"],
+                "Разрешение": f"{frame['width']}×{frame['height']}",
+                "Поворот": frame["rotation_angle"],
+                "Обработка, мс": round(frame["processing_time_ms"], 2),
+                "Детекций": frame["detections_count"],
             }
             for frame in frames
         ]
@@ -147,9 +175,10 @@ def _render_sessions_tab(st, sessions: list[dict]):
     st.dataframe(df_frames, use_container_width=True, hide_index=True)
 
 
-def _render_events_tab(st, events: list[dict], show_advanced: bool):
+def _render_events_tab(st, events: list[dict], access_logs: list[dict], show_advanced: bool):
+    st.markdown("**Журнал событий**")
     if not events:
-        st.info("Журнал событий пока пуст.")
+        st.info("Журнал проходов и событий входной зоны пока пуст.")
         return
 
     df_events = pd.DataFrame(
@@ -157,98 +186,162 @@ def _render_events_tab(st, events: list[dict], show_advanced: bool):
             {
                 "event_id": event["event_id"],
                 "session_id": event["session_id"][:8],
+                "scope": event.get("event_scope", "raw"),
                 "event_type": event.get("event_type", "object_detected"),
                 "source_type": event["source_type"],
-                "event_scope": event.get("event_scope", "raw"),
                 "frame_index": event["frame_index"],
                 "timestamp": datetime.fromtimestamp(event["timestamp"]),
                 "class_name": event["class_name"],
                 "confidence": round(event["confidence"], 3),
                 "track_id": event["track_id"] if event["track_id"] is not None else "",
-                "animal_group": event["animal_group"] or "",
                 "roi_inside": "да" if event.get("roi_inside") else "нет",
                 "message": event.get("message", ""),
-                "center_x": event.get("center_x"),
-                "center_y": event.get("center_y"),
-                "frame_width": event.get("frame_width"),
-                "frame_height": event.get("frame_height"),
             }
             for event in events
         ]
     )
 
+    if access_logs:
+        st.caption("Журнал проходов предприятия")
+        df_access_logs = pd.DataFrame(
+            [
+                {
+                    "ID": row["id"],
+                    "Время": datetime.fromtimestamp(row["timestamp"]).strftime("%Y-%m-%d %H:%M:%S"),
+                    "Сотрудник": row["employee_name"] or "не определен",
+                    "Точка прохода": row["access_point_name"] or "не задана",
+                    "Тип события": row["event_type"],
+                    "Уверенность": round(row["confidence"], 3) if row["confidence"] is not None else "",
+                    "Примечание": row["note"] or "",
+                }
+                for row in access_logs
+            ]
+        )
+        st.dataframe(df_access_logs, use_container_width=True, hide_index=True)
+    else:
+        st.caption("Журнал проходов пока пуст. Доменные события будут появляться здесь автоматически.")
+
     if not show_advanced:
-        simple_events = df_events[["timestamp", "event_scope", "class_name", "event_type", "message"]].copy()
+        simple_events = df_events[["timestamp", "scope", "event_type", "message"]].copy()
         simple_events = simple_events.rename(
             columns={
                 "timestamp": "Время",
-                "event_scope": "Уровень",
-                "class_name": "Класс",
+                "scope": "Уровень",
                 "event_type": "Тип события",
                 "message": "Описание",
             }
         )
+        st.caption("Общий журнал событий входной зоны")
         st.dataframe(simple_events.sort_values("Время", ascending=False), use_container_width=True, hide_index=True)
-        st.caption("Включите «Расширенные настройки», чтобы увидеть динамику, тепловую карту и фильтры.")
         return
 
     col_evt1, col_evt2, col_evt3 = st.columns(3)
     with col_evt1:
-        selected_source = st.selectbox("Источник событий", options=["все"] + sorted(df_events["source_type"].unique().tolist()), index=0)
+        selected_scope = st.selectbox(
+            "Уровень события",
+            options=["все"] + sorted(df_events["scope"].unique().tolist()),
+            index=0,
+        )
     with col_evt2:
-        selected_classes = st.multiselect("Классы для динамики", options=sorted(df_events["class_name"].unique().tolist()), default=[])
+        selected_event_types = st.multiselect(
+            "Типы событий",
+            options=sorted(df_events["event_type"].unique().tolist()),
+            default=[],
+        )
     with col_evt3:
-        selected_event_types = st.multiselect("Типы событий", options=sorted(df_events["event_type"].unique().tolist()), default=[])
+        selected_source = st.selectbox(
+            "Источник видеопотока",
+            options=["все"] + sorted(df_events["source_type"].unique().tolist()),
+            index=0,
+        )
 
     filtered_events = df_events.copy()
-    if selected_source != "все":
-        filtered_events = filtered_events[filtered_events["source_type"] == selected_source]
-    if selected_classes:
-        filtered_events = filtered_events[filtered_events["class_name"].isin(selected_classes)]
+    if selected_scope != "все":
+        filtered_events = filtered_events[filtered_events["scope"] == selected_scope]
     if selected_event_types:
         filtered_events = filtered_events[filtered_events["event_type"].isin(selected_event_types)]
+    if selected_source != "все":
+        filtered_events = filtered_events[filtered_events["source_type"] == selected_source]
 
     st.dataframe(filtered_events.sort_values("timestamp", ascending=False), use_container_width=True, hide_index=True)
 
     timeline = filtered_events.copy()
     timeline["minute"] = timeline["timestamp"].dt.floor("min")
     timeline_series = timeline.groupby("minute").size().rename("events")
-    st.caption("Динамика количества событий по минутам")
+    st.caption("Динамика событий входной зоны по минутам")
     st.line_chart(timeline_series)
 
-    class_bar = filtered_events["class_name"].value_counts().rename_axis("class_name").to_frame("count")
-    st.caption("Распределение событий по классам")
-    st.bar_chart(class_bar)
+    event_bar = filtered_events["event_type"].value_counts().rename_axis("event_type").to_frame("count")
+    st.caption("Распределение событий проходной")
+    st.bar_chart(event_bar)
 
-    heat_df = filtered_events.dropna(subset=["center_x", "center_y", "frame_width", "frame_height"])
-    if heat_df.empty:
+
+def _render_employees_tab(st, employees: list[dict]):
+    st.markdown("**Список сотрудников**")
+    if not employees:
+        empty_df = pd.DataFrame(columns=["ID", "ФИО", "Подразделение", "Должность", "Статус", "Создан"])
+        st.dataframe(empty_df, use_container_width=True, hide_index=True)
+        st.caption("Справочник сотрудников пока не заполнен.")
         return
 
-    heat_size = 96
-    heat = np.zeros((heat_size, heat_size), dtype=np.float32)
-    for _, row in heat_df.iterrows():
-        fw = max(float(row["frame_width"]), 1.0)
-        fh = max(float(row["frame_height"]), 1.0)
-        nx = min(max(float(row["center_x"]) / fw, 0.0), 1.0)
-        ny = min(max(float(row["center_y"]) / fh, 0.0), 1.0)
-        xi = min(int(nx * (heat_size - 1)), heat_size - 1)
-        yi = min(int(ny * (heat_size - 1)), heat_size - 1)
-        heat[yi, xi] += 1.0
+    df_employees = pd.DataFrame(
+        [
+            {
+                "ID": employee["id"],
+                "ФИО": employee["full_name"],
+                "Подразделение": employee["department"] or "",
+                "Должность": employee["position"] or "",
+                "Статус": employee["status"] or "",
+                "Создан": datetime.fromtimestamp(employee["created_at"]).strftime("%Y-%m-%d %H:%M:%S")
+                if employee["created_at"]
+                else "",
+            }
+            for employee in employees
+        ]
+    )
+    st.dataframe(df_employees, use_container_width=True, hide_index=True)
 
-    heat = cv2.GaussianBlur(heat, (0, 0), sigmaX=3, sigmaY=3)
-    if float(heat.max()) <= 0:
+
+def _render_access_stats_tab(st, events: list[dict], access_logs: list[dict]):
+    st.markdown("**Статистика проходов**")
+
+    domain_events = [event for event in events if event.get("event_scope") == "domain"]
+    entered_events = [event for event in domain_events if event.get("event_type") == "person_entered_entry_zone"]
+    left_events = [event for event in domain_events if event.get("event_type") == "person_left_entry_zone"]
+    prolonged_events = [event for event in domain_events if event.get("event_type") == "prolonged_presence_near_entry"]
+
+    met1, met2, met3, met4 = st.columns(4)
+    met1.metric("Входов в зону прохода", len(entered_events))
+    met2.metric("Выходов из зоны прохода", len(left_events))
+    met3.metric("Длительных присутствий", len(prolonged_events))
+    met4.metric("Записей в журнале проходов", len(access_logs))
+
+    if not domain_events:
+        st.info("Статистика появится после первых событий во входной зоне предприятия.")
         return
 
-    heat_norm = (heat / heat.max() * 255.0).astype(np.uint8)
-    heat_color = cv2.applyColorMap(heat_norm, cv2.COLORMAP_JET)
-    heat_color = cv2.cvtColor(heat_color, cv2.COLOR_BGR2RGB)
-    st.caption("Тепловая карта движения/появлений объектов")
-    st.image(heat_color, use_container_width=False)
+    df_domain = pd.DataFrame(
+        [
+            {
+                "timestamp": datetime.fromtimestamp(event["timestamp"]),
+                "event_type": event["event_type"],
+                "confidence": round(event["confidence"], 3),
+            }
+            for event in domain_events
+        ]
+    )
+    df_domain["date"] = df_domain["timestamp"].dt.floor("D")
+    st.caption("События проходной по дням")
+    st.line_chart(df_domain.groupby("date").size().rename("events"))
+
+    event_distribution = df_domain["event_type"].value_counts().rename_axis("event_type").to_frame("count")
+    st.caption("Распределение доменных событий")
+    st.bar_chart(event_distribution)
 
 
 def _render_export_tab(st, sessions: list[dict], events: list[dict]):
     if not sessions and not events:
-        st.info("Нет данных для экспорта.")
+        st.info("Нет данных для выгрузки отчетов.")
         return
 
     sessions_export = []
@@ -259,8 +352,6 @@ def _render_export_tab(st, sessions: list[dict], events: list[dict]):
                 "model": session["model"],
                 "source_type": session["source_type"],
                 "source_path": session["source_path"],
-                "animal_filter": session["animal_filter"],
-                "class_filter": session["class_filter"],
                 "rotation_angle": session["rotation_angle"],
                 "started_at": datetime.fromtimestamp(session["started_at"]).isoformat(),
                 "finished_at": datetime.fromtimestamp(session["finished_at"]).isoformat() if session["finished_at"] else None,
@@ -268,22 +359,6 @@ def _render_export_tab(st, sessions: list[dict], events: list[dict]):
                 "events_count": session["events_count"],
             }
         )
-
-    frames_export = []
-    for session in sessions:
-        for frame in session["frames"]:
-            frames_export.append(
-                {
-                    "session_id": session["id"],
-                    "frame_index": frame["frame_index"],
-                    "timestamp": datetime.fromtimestamp(frame["timestamp"]).isoformat(),
-                    "width": frame["width"],
-                    "height": frame["height"],
-                    "rotation_angle": frame["rotation_angle"],
-                    "processing_time_ms": round(frame["processing_time_ms"], 2),
-                    "detections_count": frame["detections_count"],
-                }
-            )
 
     events_export = []
     for event in events:
@@ -299,56 +374,42 @@ def _render_export_tab(st, sessions: list[dict], events: list[dict]):
                 "class_name": event["class_name"],
                 "confidence": round(event["confidence"], 3),
                 "track_id": event["track_id"],
-                "animal_group": event["animal_group"],
-                "is_animal": event["is_animal"],
                 "roi_inside": event.get("roi_inside"),
-                "center_x": event.get("center_x"),
-                "center_y": event.get("center_y"),
-                "frame_width": event.get("frame_width"),
-                "frame_height": event.get("frame_height"),
                 "message": event.get("message", ""),
             }
         )
 
     df_sessions_export = pd.DataFrame(sessions_export)
-    df_frames_export = pd.DataFrame(frames_export)
     df_events_export = pd.DataFrame(events_export)
 
     st.download_button(
-        "⬇️ Экспорт сессий (CSV)",
+        "⬇️ Экспорт сеансов мониторинга (CSV)",
         data=df_sessions_export.to_csv(index=False).encode("utf-8"),
-        file_name="sessions_report.csv",
+        file_name="monitoring_sessions.csv",
         mime="text/csv",
     )
     st.download_button(
-        "⬇️ Экспорт кадров (CSV)",
-        data=df_frames_export.to_csv(index=False).encode("utf-8"),
-        file_name="frames_report.csv",
-        mime="text/csv",
-    )
-    st.download_button(
-        "⬇️ Экспорт событий (CSV)",
+        "⬇️ Экспорт журнала событий (CSV)",
         data=df_events_export.to_csv(index=False).encode("utf-8"),
-        file_name="events_report.csv",
+        file_name="entry_zone_events.csv",
         mime="text/csv",
     )
 
     full_report = {
         "generated_at": datetime.now().isoformat(),
         "sessions": sessions_export,
-        "frames": frames_export,
         "events": events_export,
     }
     st.download_button(
-        "⬇️ Экспорт полного отчёта (JSON)",
+        "⬇️ Экспорт полного отчета (JSON)",
         data=json.dumps(full_report, ensure_ascii=False, indent=2).encode("utf-8"),
-        file_name="full_report.json",
+        file_name="enterprise_access_report.json",
         mime="application/json",
     )
 
 
 def _render_kpi_tab(st, model):
-    st.markdown("### KPI модели: Precision / Recall")
+    st.markdown("### KPI модели видеонаблюдения")
     st.caption("Загрузите изображения и CSV-разметку: image_name,class_name,x1,y1,x2,y2")
     kpi_conf = st.slider("Порог confidence для KPI", 0.1, 0.95, 0.25, 0.05, key="kpi_conf")
     kpi_iou = st.slider("Порог IoU для матчинга", 0.1, 0.95, 0.5, 0.05, key="kpi_iou")

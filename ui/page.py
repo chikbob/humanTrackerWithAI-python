@@ -1,5 +1,5 @@
 def configure_page(st):
-    st.set_page_config(page_title="Мониторинг и анализ объектов", layout="wide")
+    st.set_page_config(page_title="Мониторинг прохода сотрудников", layout="wide")
     st.markdown(
         """
         <style>
@@ -9,9 +9,17 @@ def configure_page(st):
             .stSelectbox div[data-baseweb="select"] {cursor: pointer;}
             .stButton>button {width: 100%; border-radius: 10px; font-size: 16px;}
             .stRadio>div {justify-content: center;}
+            [data-testid="stMetric"] {
+                background: #f6f8fb;
+                border: 1px solid #d9e1ea;
+                padding: 0.8rem;
+                border-radius: 12px;
+            }
         </style>
         """,
         unsafe_allow_html=True,
     )
-    st.title("📡 Система мониторинга и интеллектуального анализа объектов")
-    st.caption("Детекция и трекинг в реальном времени, журнал событий, уведомления, динамика и экспорт отчётов.")
+    st.title("🏭 Веб-система мониторинга прохода сотрудников")
+    st.caption(
+        "Онлайн-мониторинг входной зоны предприятия, журнал проходов, события проходной и аналитика по перемещению сотрудников."
+    )

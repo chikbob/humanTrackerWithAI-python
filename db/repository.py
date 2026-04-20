@@ -488,3 +488,40 @@ def load_history_from_db():
         )
 
     return sessions, events
+
+
+def load_employees():
+    conn = get_db_conn()
+    rows = conn.execute(
+        """
+        SELECT id, full_name, department, position, status, created_at
+        FROM employees
+        ORDER BY full_name ASC
+        """
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def load_access_logs():
+    conn = get_db_conn()
+    rows = conn.execute(
+        """
+        SELECT
+            access_logs.id,
+            access_logs.employee_id,
+            employees.full_name AS employee_name,
+            access_logs.timestamp,
+            access_logs.access_point_id,
+            access_points.name AS access_point_name,
+            access_logs.event_type,
+            access_logs.confidence,
+            access_logs.note
+        FROM access_logs
+        LEFT JOIN employees ON employees.id = access_logs.employee_id
+        LEFT JOIN access_points ON access_points.id = access_logs.access_point_id
+        ORDER BY access_logs.timestamp DESC
+        """
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]

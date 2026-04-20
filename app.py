@@ -8,7 +8,15 @@ import streamlit as st
 from PIL import Image
 
 from core.detection import build_class_meta, detect_and_annotate, detect_and_draw_live, load_model
-from db.repository import db_insert_event, db_insert_frame, db_upsert_session, init_db, load_history_from_db
+from db.repository import (
+    db_insert_event,
+    db_insert_frame,
+    db_upsert_session,
+    init_db,
+    load_access_logs,
+    load_employees,
+    load_history_from_db,
+)
 from services.events import add_notification, process_disappeared_tracks, register_detection_and_entry_events
 from services.state import finish_session, get_current_session, init_session_state, log_frame, start_session
 from ui.analytics import render_analytics, render_status_panel
@@ -40,6 +48,8 @@ def main():
     init_db()
     init_session_state(st.session_state, load_history_from_db)
     configure_page(st)
+    employees = load_employees()
+    access_logs = load_access_logs()
 
     primary_config = render_primary_sidebar(st)
     model_name = MODEL_MAP[primary_config["model_choice"]]
@@ -114,11 +124,15 @@ def main():
 
     with work_col:
         with st.container(border=True):
-            st.subheader("🎯 Обработка потока")
+            st.subheader("🎥 Онлайн-мониторинг входной зоны")
             frame_display = st.empty()
 
             if source_mode == "📁 Загрузить фото":
-                uploaded_image = st.file_uploader("Загрузите изображение", type=["jpg", "jpeg", "png"], key="img_uploader")
+                uploaded_image = st.file_uploader(
+                    "Загрузите изображение входной зоны",
+                    type=["jpg", "jpeg", "png"],
+                    key="img_uploader",
+                )
                 if uploaded_image:
                     start_session(
                         st.session_state,
@@ -168,12 +182,16 @@ def main():
                     )
                     finish_session(st.session_state, db_upsert_session)
                     frame_display.image(frame_rgb, channels="RGB")
-                    st.success("Изображение обработано.")
+                    st.success("Изображение входной зоны обработано.")
                 else:
-                    st.info("Загрузите файл, чтобы запустить анализ.")
+                    st.info("Загрузите файл, чтобы выполнить проверку входной зоны.")
 
             elif source_mode == "🎞️ Загрузить видео":
-                uploaded_video = st.file_uploader("Загрузите видео", type=["mp4", "avi", "mov"], key="video_uploader")
+                uploaded_video = st.file_uploader(
+                    "Загрузите видео с проходной",
+                    type=["mp4", "avi", "mov"],
+                    key="video_uploader",
+                )
                 if uploaded_video:
                     start_session(
                         st.session_state,
@@ -192,7 +210,7 @@ def main():
                     temp_video.close()
 
                     cap = cv2.VideoCapture(temp_path)
-                    st.info("▶️ Обработка видео с трекингом...")
+                    st.info("▶️ Идет анализ видеопотока проходной...")
                     frame_index = 0
 
                     while cap.isOpened():
@@ -240,26 +258,26 @@ def main():
                         pass
 
                     finish_session(st.session_state, db_upsert_session)
-                    st.success("✅ Видео обработано.")
+                    st.success("✅ Видео входной зоны обработано.")
                 else:
-                    st.info("Загрузите видеофайл, чтобы начать анализ.")
+                    st.info("Загрузите видеофайл, чтобы начать мониторинг прохода.")
 
             elif source_mode == "📷 Веб-камера":
                 camera_mode = st.radio(
-                    "Режим камеры",
+                    "Режим камеры входной зоны",
                     options=[
-                        "Браузерная камера RT (для Streamlit Cloud)",
+                        "Браузерная камера RT",
                         "Браузерная камера (снимок)",
-                        "Локальная OpenCV камера (только на вашем ПК)",
+                        "Локальная OpenCV камера",
                     ],
                     index=0,
                     horizontal=False,
                     key="camera_mode",
                 )
 
-                if camera_mode == "Браузерная камера RT (для Streamlit Cloud)":
+                if camera_mode == "Браузерная камера RT":
                     if not WEBRTC_AVAILABLE:
-                        st.error("Для realtime-режима установите зависимость streamlit-webrtc.")
+                        st.error("Для онлайн-мониторинга установите зависимость streamlit-webrtc.")
                     else:
                         if "browser_rt_on" not in st.session_state:
                             st.session_state.browser_rt_on = False
@@ -274,9 +292,9 @@ def main():
                             st.session_state.browser_rt_on = True
                         if stop_rt and st.session_state.browser_rt_on:
                             st.session_state.browser_rt_on = False
-                            st.success("🛑 Камера остановлена.")
+                            st.success("🛑 Мониторинг камеры остановлен.")
 
-                        st.caption("Нажмите Start в виджете камеры и разрешите доступ в браузере.")
+                        st.caption("Нажмите Start в виджете камеры и разрешите доступ к камере проходной в браузере.")
 
                         def _video_frame_callback(frame):
                             frame_bgr = frame.to_ndarray(format="bgr24")
@@ -307,11 +325,11 @@ def main():
                                 async_processing=True,
                             )
                         else:
-                            st.info("Нажмите «Запустить камеру», чтобы начать realtime.")
+                            st.info("Нажмите «Запустить камеру», чтобы начать онлайн-мониторинг входной зоны.")
 
                 elif camera_mode == "Браузерная камера (снимок)":
-                    st.info("Режим снимка: нажмите кнопку камеры ниже и сделайте фото.")
-                    shot = st.camera_input("Снимок с камеры", key="browser_cam_input")
+                    st.info("Режим снимка: сделайте фото входной зоны предприятия.")
+                    shot = st.camera_input("Снимок с камеры проходной", key="browser_cam_input")
                     if shot is not None:
                         start_session(
                             st.session_state,
@@ -358,14 +376,14 @@ def main():
                         )
                         finish_session(st.session_state, db_upsert_session)
                         frame_display.image(frame_rgb, channels="RGB")
-                        st.success("Снимок обработан.")
+                        st.success("Снимок входной зоны обработан.")
                 else:
-                    camera_index = st.number_input("Номер камеры", min_value=0, step=1, value=0, key="cam_index")
+                    camera_index = st.number_input("Номер локальной камеры", min_value=0, step=1, value=0, key="cam_index")
                     run_col1, run_col2 = st.columns(2)
                     with run_col1:
-                        start_button = st.button("▶️ Запустить", key="webcam_start")
+                        start_button = st.button("▶️ Запустить мониторинг", key="webcam_start")
                     with run_col2:
-                        stop_button = st.button("⏹ Остановить", key="webcam_stop")
+                        stop_button = st.button("⏹ Остановить мониторинг", key="webcam_stop")
 
                     if start_button:
                         st.session_state.running = True
@@ -375,7 +393,7 @@ def main():
                     if st.session_state.running:
                         cap = cv2.VideoCapture(camera_index)
                         if not cap.isOpened():
-                            st.error("❌ Не удалось открыть камеру через OpenCV. На Streamlit Cloud используйте режим «Браузерная камера».")
+                            st.error("❌ Не удалось открыть локальную камеру. Для веб-версии используйте браузерную камеру.")
                             st.session_state.running = False
                         else:
                             start_session(
@@ -388,14 +406,14 @@ def main():
                                 track_classes=track_classes,
                                 rotation_angle=rotation_angle,
                             )
-                            st.info("✅ Камера запущена. Идёт трекинг объектов.")
+                            st.info("✅ Мониторинг входной зоны запущен. Идет сопровождение людей в зоне прохода.")
                             prev_time = time.time()
                             frame_index = 0
 
                             while st.session_state.running:
                                 ret, frame = cap.read()
                                 if not ret:
-                                    st.warning("⚠️ Кадр не получен.")
+                                    st.warning("⚠️ Кадр с камеры проходной не получен.")
                                     break
                                 frame = rotate_frame(frame, rotation_angle)
                                 frame_rgb, detections_meta, processing_time_ms = detect_and_annotate(
@@ -436,9 +454,9 @@ def main():
                             cap.release()
                             finish_session(st.session_state, db_upsert_session)
                             st.session_state.running = False
-                            st.success("🛑 Распознавание остановлено.")
+                            st.success("🛑 Мониторинг входной зоны остановлен.")
                     else:
-                        st.info("Нажмите «Запустить», чтобы начать обработку камеры.")
+                        st.info("Нажмите «Запустить мониторинг», чтобы начать обработку камеры проходной.")
 
     with info_col:
         render_status_panel(
@@ -460,6 +478,8 @@ def main():
         notifications=st.session_state.notifications,
         show_advanced=primary_config["show_advanced"],
         model=model,
+        employees=employees,
+        access_logs=access_logs,
     )
 
 
