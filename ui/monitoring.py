@@ -13,11 +13,31 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
+from core.detection import detect_and_draw_live
 from services.events import add_notification, process_disappeared_tracks, register_detection_and_entry_events
 from services.state import finish_session, get_current_session, log_frame, start_session
 from ui.sidebar import ANIMAL_CLASSES
 from utils.performance import DEFAULT_SESSION_PERSIST_INTERVAL, DEFAULT_UI_REFRESH_INTERVAL_SEC
 from utils.vision import draw_fancy_box, rotate_frame
+
+try:
+    import av
+    from streamlit_webrtc import RTCConfiguration, WebRtcMode, webrtc_streamer
+
+    WEBRTC_AVAILABLE = True
+except Exception:
+    av = None
+    RTCConfiguration = None
+    WebRtcMode = None
+    webrtc_streamer = None
+    WEBRTC_AVAILABLE = False
+
+
+RTC_CONFIG = (
+    RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
+    if WEBRTC_AVAILABLE
+    else None
+)
 
 
 def render_online_monitoring(
@@ -45,7 +65,8 @@ def render_online_monitoring(
     for source in active_sources:
         label = f"{source['name']} [{source['source_type']}]"
         source_options.append(label)
-        source_map[label] = {"kind": "production", "source": source}
+        source_kind = "browser_camera" if source["source_type"] == "browser_camera" else "production"
+        source_map[label] = {"kind": source_kind, "source": source}
     browser_option = "Браузерная камера [demo/fallback]"
     source_options.append(browser_option)
     source_map[browser_option] = {"kind": "browser_camera", "source": None}
@@ -77,11 +98,12 @@ def render_online_monitoring(
                 )
             elif selected_binding["kind"] == "browser_camera":
                 st.caption(
-                    "Браузерная камера доступна как дополнительный способ live monitoring, "
-                    "если production-источник временно недоступен."
+                    "Браузерная камера работает через браузер пользователя и передает live-stream "
+                    "в основной блок мониторинга."
                 )
                 browser_last_frame_at = _render_browser_camera_monitor(
                     st,
+                    source_label=selected_source["name"] if selected_source is not None else "Браузерная камера",
                     model_name=model_name,
                     model=model,
                     class_meta=class_meta,
@@ -116,7 +138,7 @@ def render_online_monitoring(
     with right_col:
         with st.container(border=True):
             st.subheader("Панель состояния")
-            status_fps = round(selected_status.get("fps") or 0.0, 2) if selected_binding["kind"] == "production" else "snapshot"
+            status_fps = round(selected_status.get("fps") or 0.0, 2) if selected_binding["kind"] == "production" else "browser"
             st.metric("FPS", status_fps)
             st.metric("confidence threshold", round(conf_threshold, 2))
             if selected_binding["kind"] == "production" and selected_source is not None:
@@ -412,6 +434,7 @@ def _render_demo_workspace(
 def _render_browser_camera_monitor(
     st,
     *,
+    source_label: str,
     model_name: str,
     model,
     class_meta: dict,
@@ -422,7 +445,38 @@ def _render_browser_camera_monitor(
     db_insert_frame,
     db_upsert_session,
 ):
-    """Process a browser camera snapshot directly in the main live monitoring panel."""
+    """Render browser live-stream when available, otherwise fall back to a snapshot workflow."""
+    if WEBRTC_AVAILABLE:
+        st.caption("Нажмите Start в виджете ниже и разрешите браузеру доступ к камере.")
+
+        def _video_frame_callback(frame):
+            frame_bgr = frame.to_ndarray(format="bgr24")
+            frame_rgb = detect_and_draw_live(
+                frame_bgr,
+                model=model,
+                conf_threshold=conf_threshold,
+                inference_size=inference_size,
+                class_meta=class_meta,
+                animal_filter="всё",
+                animal_classes=ANIMAL_CLASSES,
+                track_classes=["person"],
+                roi_config={"enable_roi": True, "roi_x": 20, "roi_y": 20, "roi_w": 60, "roi_h": 60},
+                draw_box_fn=draw_fancy_box,
+            )
+            session_state.browser_camera_last_frame_at = time.time()
+            return av.VideoFrame.from_ndarray(cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR), format="bgr24")
+
+        webrtc_streamer(
+            key=f"browser_camera_stream_{source_label}",
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration=RTC_CONFIG,
+            media_stream_constraints={"video": True, "audio": False},
+            video_frame_callback=_video_frame_callback,
+            async_processing=True,
+        )
+        return session_state.get("browser_camera_last_frame_at")
+
+    st.warning("Для live-stream браузерной камеры требуется streamlit-webrtc. Пока доступен режим снимка.")
     shot = st.camera_input("Кадр из браузерной камеры", key="live_monitor_browser_camera")
     if shot is None:
         st.info("Разрешите доступ к камере в браузере и сделайте кадр для анализа входной зоны.")
