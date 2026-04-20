@@ -71,12 +71,17 @@ def render_online_monitoring(
         source_kind = "browser_camera" if source["source_type"] == "browser_camera" else "production"
         source_map[label] = {"kind": source_kind, "source": source}
     browser_option = "Браузерная камера"
+    local_camera_option = "Локальная камера MacBook"
     if browser_option not in source_options:
         source_options.append(browser_option)
         source_map[browser_option] = {"kind": "browser_camera", "source": None}
+    if local_camera_option not in source_options:
+        source_options.append(local_camera_option)
+        source_map[local_camera_option] = {"kind": "local_camera", "source": None}
     if not source_options:
-        source_options = [browser_option]
+        source_options = [browser_option, local_camera_option]
         source_map[browser_option] = {"kind": "browser_camera", "source": None}
+        source_map[local_camera_option] = {"kind": "local_camera", "source": None}
 
     default_index = 0
     if preferred_source == "browser_camera" and browser_option in source_options:
@@ -90,7 +95,10 @@ def render_online_monitoring(
     selected_binding = source_map[selected_option]
     selected_source = selected_binding["source"]
     selected_status = statuses_by_id.get(selected_source["id"], {}) if selected_source else {}
-    selected_last_frame_at = selected_status.get("last_frame_at")
+    if selected_binding["kind"] == "local_camera":
+        selected_last_frame_at = session_state.get("local_camera_last_frame_at")
+    else:
+        selected_last_frame_at = selected_status.get("last_frame_at")
 
     if standalone_mode:
         _render_standalone_live_window(
@@ -153,6 +161,27 @@ def render_online_monitoring(
                 )
                 if browser_last_frame_at is not None:
                     selected_last_frame_at = browser_last_frame_at
+            elif selected_binding["kind"] == "local_camera":
+                st.caption(
+                    "Локальная камера использует встроенную камеру устройства через OpenCV и подходит для "
+                    "непрерывного all-time мониторинга на MacBook."
+                )
+                local_last_frame_at = _render_local_camera_monitor(
+                    st,
+                    model_name=model_name,
+                    model=model,
+                    class_meta=class_meta,
+                    inference_size=inference_size,
+                    conf_threshold=conf_threshold,
+                    frame_skip=frame_skip,
+                    session_state=session_state,
+                    db_insert_event=db_insert_event,
+                    db_insert_frame=db_insert_frame,
+                    db_upsert_session=db_upsert_session,
+                    standalone_mode=False,
+                )
+                if local_last_frame_at is not None:
+                    selected_last_frame_at = local_last_frame_at
             else:
                 st.warning(
                     "Нет активных production-источников. Добавьте RTSP/IP/USB источник в разделе "
@@ -175,13 +204,25 @@ def render_online_monitoring(
     with right_col:
         with st.container(border=True):
             st.subheader("Панель состояния")
-            status_fps = round(selected_status.get("fps") or 0.0, 2) if selected_binding["kind"] == "production" else "—"
+            if selected_binding["kind"] == "production":
+                status_fps = round(selected_status.get("fps") or 0.0, 2)
+            elif selected_binding["kind"] == "local_camera":
+                status_fps = round(session_state.get("local_camera_fps") or 0.0, 2)
+            else:
+                status_fps = "—"
             st.metric("FPS", status_fps)
-            stream_mode_label = "Server pipeline" if selected_binding["kind"] == "production" else "Browser live"
+            if selected_binding["kind"] == "production":
+                stream_mode_label = "Server pipeline"
+            elif selected_binding["kind"] == "local_camera":
+                stream_mode_label = "Local device"
+            else:
+                stream_mode_label = "Browser live"
             st.metric("Режим потока", stream_mode_label)
             st.metric("confidence threshold", round(conf_threshold, 2))
             if selected_binding["kind"] == "production" and selected_source is not None:
                 source_name = selected_source["name"]
+            elif selected_binding["kind"] == "local_camera":
+                source_name = "Встроенная камера MacBook"
             else:
                 source_name = "Браузерная камера"
             st.metric("Источник потока", source_name)
@@ -280,6 +321,21 @@ def _render_standalone_live_window(
             st.image(snapshot_path, use_container_width=True)
         else:
             st.warning("Для production-источника пока нет актуального snapshot от worker.")
+    elif selected_binding["kind"] == "local_camera":
+        _render_local_camera_monitor(
+            st,
+            model_name=model_name,
+            model=model,
+            class_meta=class_meta,
+            inference_size=inference_size,
+            conf_threshold=conf_threshold,
+            frame_skip=0,
+            session_state=session_state,
+            db_insert_event=db_insert_event,
+            db_insert_frame=db_insert_frame,
+            db_upsert_session=db_upsert_session,
+            standalone_mode=True,
+        )
     else:
         _render_browser_camera_monitor(
             st,
@@ -296,6 +352,156 @@ def _render_standalone_live_window(
             standalone_mode=True,
         )
     st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _render_local_camera_monitor(
+    st,
+    *,
+    model_name: str,
+    model,
+    class_meta: dict,
+    inference_size: int,
+    conf_threshold: float,
+    frame_skip: int,
+    session_state,
+    db_insert_event,
+    db_insert_frame,
+    db_upsert_session,
+    standalone_mode: bool = False,
+):
+    """Continuous local-device monitoring for MacBook internal camera and other local webcams."""
+    camera_index = 0
+    if not standalone_mode:
+        camera_index = st.number_input(
+            "Индекс локальной камеры",
+            min_value=0,
+            step=1,
+            value=0,
+            key="live_local_camera_index",
+        )
+    if "local_camera_running" not in session_state:
+        session_state.local_camera_running = False
+
+    if standalone_mode:
+        session_state.local_camera_running = True
+    else:
+        control_col1, control_col2 = st.columns(2)
+        with control_col1:
+            if st.button("Запустить локальную камеру", key="live_local_camera_start"):
+                session_state.local_camera_running = True
+        with control_col2:
+            if st.button("Остановить локальную камеру", key="live_local_camera_stop"):
+                session_state.local_camera_running = False
+
+    if not session_state.local_camera_running:
+        st.info("Запустите локальную камеру для непрерывного мониторинга.")
+        return session_state.get("local_camera_last_frame_at")
+
+    cap = cv2.VideoCapture(int(camera_index))
+    if not cap.isOpened():
+        st.error("Не удалось открыть встроенную камеру устройства через OpenCV.")
+        session_state.local_camera_running = False
+        return session_state.get("local_camera_last_frame_at")
+
+    frame_display = st.empty()
+    start_session(
+        session_state,
+        db_upsert_session,
+        model_name=model_name,
+        source_type="webcam",
+        source_path=f"camera:{camera_index}",
+        animal_filter="всё",
+        track_classes=["person"],
+        rotation_angle=0,
+    )
+    frame_index = 0
+    last_ui_draw_ts = 0.0
+    frame_counter = 0
+    fps_window_start = time.time()
+
+    def register_event_pipeline(*, frame_index: int, detection: dict, source_type: str, session: dict):
+        register_detection_and_entry_events(
+            session_state,
+            db_insert_event,
+            session=session,
+            frame_index=frame_index,
+            detection=detection,
+            source_type=source_type,
+            settings={
+                "rule_count_enabled": False,
+                "rule_class": "person",
+                "rule_n": 3,
+                "rule_t": 10,
+                "rule_disappear_enabled": True,
+                "rule_disappear_seconds": 5,
+                "enable_notifications": False,
+                "notify_conf_threshold": conf_threshold,
+                "notify_classes": ["person"],
+                "enable_roi": True,
+                "default_access_point_id": None,
+                "prolonged_presence_seconds": 10,
+                "event_cooldown": 5,
+            },
+            notify_callback=lambda _text: add_notification(session_state, _text, enabled=False, toast_callback=None),
+        )
+
+    def process_disappeared(*, frame_index: int, source_type: str, session: dict, frame_width: int, frame_height: int):
+        process_disappeared_tracks(
+            session_state,
+            db_insert_event,
+            session=session,
+            frame_index=frame_index,
+            source_type=source_type,
+            frame_width=frame_width,
+            frame_height=frame_height,
+            rule_disappear_enabled=True,
+            rule_disappear_seconds=5,
+            enable_notifications=False,
+            notify_callback=lambda _text: None,
+            default_access_point_id=None,
+        )
+
+    while session_state.local_camera_running:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if frame_skip > 0 and frame_index % (frame_skip + 1) != 0:
+            frame_index += 1
+            continue
+        frame_rgb = _process_single_frame(
+            st=st,
+            frame_bgr=frame,
+            frame_index=frame_index,
+            source_type="webcam",
+            use_tracking=True,
+            frame_display=frame_display,
+            model=model,
+            class_meta=class_meta,
+            inference_size=inference_size,
+            conf_threshold=conf_threshold,
+            session_state=session_state,
+            db_insert_frame=db_insert_frame,
+            db_upsert_session=db_upsert_session,
+            rotation_angle=0,
+            register_event_pipeline=register_event_pipeline,
+            process_disappeared=process_disappeared,
+            draw_now=time.time() - last_ui_draw_ts >= DEFAULT_UI_REFRESH_INTERVAL_SEC,
+        )
+        frame_counter += 1
+        elapsed = time.time() - fps_window_start
+        if elapsed > 0:
+            session_state.local_camera_fps = frame_counter / elapsed
+        session_state.local_camera_last_frame_at = time.time()
+        if frame_rgb is not None and time.time() - last_ui_draw_ts >= DEFAULT_UI_REFRESH_INTERVAL_SEC:
+            frame_display.image(frame_rgb, channels="RGB", use_container_width=True)
+            last_ui_draw_ts = time.time()
+        frame_index += 1
+
+    cap.release()
+    finish_session(session_state, db_upsert_session)
+    if not standalone_mode:
+        session_state.local_camera_running = False
+    return session_state.get("local_camera_last_frame_at")
 
 
 def _render_demo_workspace(
