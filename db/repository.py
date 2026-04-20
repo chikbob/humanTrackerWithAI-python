@@ -503,6 +503,62 @@ def load_employees():
     return [dict(row) for row in rows]
 
 
+def create_employee(*, full_name: str, department: str, position: str, status: str):
+    conn = get_db_conn()
+    conn.execute(
+        """
+        INSERT INTO employees (full_name, department, position, status, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            full_name.strip(),
+            department.strip(),
+            position.strip(),
+            status.strip(),
+            time.time(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_employee(*, employee_id: int, full_name: str, department: str, position: str, status: str):
+    conn = get_db_conn()
+    conn.execute(
+        """
+        UPDATE employees
+        SET full_name = ?, department = ?, position = ?, status = ?
+        WHERE id = ?
+        """,
+        (
+            full_name.strip(),
+            department.strip(),
+            position.strip(),
+            status.strip(),
+            employee_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_employee_status(*, employee_id: int, status: str):
+    conn = get_db_conn()
+    conn.execute(
+        """
+        UPDATE employees
+        SET status = ?
+        WHERE id = ?
+        """,
+        (
+            status.strip(),
+            employee_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
 def load_access_logs():
     conn = get_db_conn()
     rows = conn.execute(

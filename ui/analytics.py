@@ -53,6 +53,9 @@ def render_analytics(
     model,
     employees: list[dict],
     access_logs: list[dict],
+    create_employee_fn,
+    update_employee_fn,
+    update_employee_status_fn,
 ):
     st.markdown("---")
     st.subheader("📊 Оперативная панель предприятия")
@@ -98,7 +101,13 @@ def render_analytics(
         _render_events_tab(st, events, access_logs, show_advanced)
 
     with tab_employees:
-        _render_employees_tab(st, employees)
+        _render_employees_tab(
+            st,
+            employees,
+            create_employee_fn=create_employee_fn,
+            update_employee_fn=update_employee_fn,
+            update_employee_status_fn=update_employee_status_fn,
+        )
 
     with tab_stats:
         _render_access_stats_tab(st, events, access_logs)
@@ -382,30 +391,131 @@ def _render_events_tab(st, events: list[dict], access_logs: list[dict], show_adv
     st.bar_chart(event_bar)
 
 
-def _render_employees_tab(st, employees: list[dict]):
+def _render_employees_tab(st, employees: list[dict], *, create_employee_fn, update_employee_fn, update_employee_status_fn):
     st.markdown("**Список сотрудников**")
-    if not employees:
-        empty_df = pd.DataFrame(columns=["ID", "ФИО", "Подразделение", "Должность", "Статус", "Создан"])
-        st.dataframe(empty_df, use_container_width=True, hide_index=True)
-        st.caption("Справочник сотрудников пока не заполнен.")
-        return
 
+    employee_rows = [
+        {
+            "ID": employee["id"],
+            "ФИО": employee["full_name"],
+            "Подразделение": employee["department"] or "",
+            "Должность": employee["position"] or "",
+            "Статус": employee["status"] or "",
+            "Создан": datetime.fromtimestamp(employee["created_at"]).strftime("%Y-%m-%d %H:%M:%S")
+            if employee["created_at"]
+            else "",
+        }
+        for employee in employees
+    ]
     df_employees = pd.DataFrame(
-        [
-            {
-                "ID": employee["id"],
-                "ФИО": employee["full_name"],
-                "Подразделение": employee["department"] or "",
-                "Должность": employee["position"] or "",
-                "Статус": employee["status"] or "",
-                "Создан": datetime.fromtimestamp(employee["created_at"]).strftime("%Y-%m-%d %H:%M:%S")
-                if employee["created_at"]
-                else "",
-            }
-            for employee in employees
-        ]
+        employee_rows,
+        columns=["ID", "ФИО", "Подразделение", "Должность", "Статус", "Создан"],
     )
     st.dataframe(df_employees, use_container_width=True, hide_index=True)
+    if not employees:
+        st.caption("Справочник сотрудников пока не заполнен. Добавьте первого сотрудника через форму ниже.")
+
+    status_options = ["active", "inactive", "on_leave", "blocked"]
+    form_col1, form_col2 = st.columns(2)
+
+    with form_col1:
+        with st.container(border=True):
+            st.caption("Форма добавления сотрудника")
+            with st.form("employee_create_form", clear_on_submit=True):
+                new_full_name = st.text_input("ФИО сотрудника")
+                new_department = st.text_input("Подразделение")
+                new_position = st.text_input("Должность")
+                new_status = st.selectbox("Статус", options=status_options, index=0, key="employee_create_status")
+                create_submitted = st.form_submit_button("Добавить сотрудника")
+
+            if create_submitted:
+                if not new_full_name.strip():
+                    st.error("Поле ФИО обязательно для заполнения.")
+                else:
+                    create_employee_fn(
+                        full_name=new_full_name,
+                        department=new_department,
+                        position=new_position,
+                        status=new_status,
+                    )
+                    st.success("Сотрудник добавлен.")
+                    st.rerun()
+
+    with form_col2:
+        with st.container(border=True):
+            st.caption("Форма редактирования сотрудника")
+            if not employees:
+                st.info("Добавьте сотрудника, чтобы редактировать его карточку.")
+            else:
+                employee_options = {
+                    f"{employee['full_name']} [{employee['id']}]": employee
+                    for employee in employees
+                }
+                selected_label = st.selectbox(
+                    "Выберите сотрудника",
+                    options=list(employee_options.keys()),
+                    key="employee_edit_select",
+                )
+                selected_employee = employee_options[selected_label]
+
+                edit_status_index = (
+                    status_options.index(selected_employee["status"])
+                    if selected_employee["status"] in status_options
+                    else 0
+                )
+                with st.form("employee_edit_form"):
+                    edit_full_name = st.text_input("ФИО", value=selected_employee["full_name"])
+                    edit_department = st.text_input("Подразделение", value=selected_employee["department"] or "")
+                    edit_position = st.text_input("Должность", value=selected_employee["position"] or "")
+                    edit_status = st.selectbox(
+                        "Статус",
+                        options=status_options,
+                        index=edit_status_index,
+                        key="employee_edit_status",
+                    )
+                    edit_submitted = st.form_submit_button("Сохранить изменения")
+
+                if edit_submitted:
+                    if not edit_full_name.strip():
+                        st.error("Поле ФИО обязательно для заполнения.")
+                    else:
+                        update_employee_fn(
+                            employee_id=selected_employee["id"],
+                            full_name=edit_full_name,
+                            department=edit_department,
+                            position=edit_position,
+                            status=edit_status,
+                        )
+                        st.success("Данные сотрудника обновлены.")
+                        st.rerun()
+
+    with st.container(border=True):
+        st.caption("Быстрая смена статуса сотрудника")
+        if not employees:
+            st.info("Нет сотрудников для смены статуса.")
+        else:
+            status_col1, status_col2 = st.columns([2, 1])
+            employee_options = {
+                f"{employee['full_name']} [{employee['id']}]": employee
+                for employee in employees
+            }
+            with status_col1:
+                status_employee_label = st.selectbox(
+                    "Сотрудник",
+                    options=list(employee_options.keys()),
+                    key="employee_status_select",
+                )
+            with status_col2:
+                target_status = st.selectbox(
+                    "Новый статус",
+                    options=status_options,
+                    key="employee_status_value",
+                )
+            if st.button("Применить статус", key="employee_status_apply"):
+                selected_employee = employee_options[status_employee_label]
+                update_employee_status_fn(employee_id=selected_employee["id"], status=target_status)
+                st.success("Статус сотрудника изменен.")
+                st.rerun()
 
 
 def _render_access_stats_tab(st, events: list[dict], access_logs: list[dict]):

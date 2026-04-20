@@ -9,6 +9,7 @@ from PIL import Image
 
 from core.detection import build_class_meta, detect_and_annotate, detect_and_draw_live, load_model
 from db.repository import (
+    create_employee,
     db_insert_event,
     db_insert_frame,
     db_upsert_session,
@@ -16,6 +17,8 @@ from db.repository import (
     load_access_logs,
     load_employees,
     load_history_from_db,
+    update_employee,
+    update_employee_status,
 )
 from services.events import add_notification, process_disappeared_tracks, register_detection_and_entry_events
 from services.state import finish_session, get_current_session, init_session_state, log_frame, start_session
@@ -480,6 +483,9 @@ def main():
         model=model,
         employees=employees,
         access_logs=access_logs,
+        create_employee_fn=create_employee,
+        update_employee_fn=update_employee,
+        update_employee_status_fn=update_employee_status,
     )
 
 
