@@ -43,6 +43,11 @@ CAMERA_BACKEND_OPTIONS = [
     ("avfoundation", getattr(cv2, "CAP_AVFOUNDATION", None), "AVFoundation"),
     ("any", getattr(cv2, "CAP_ANY", None), "CAP_ANY"),
 ]
+LOCAL_CAMERA_RESOLUTIONS = {
+    "480p": (640, 480),
+    "720p": (1280, 720),
+    "1080p": (1920, 1080),
+}
 
 
 def _safe_stream_key(value: str) -> str:
@@ -104,6 +109,20 @@ def _probe_camera_backends(camera_index: int) -> list[dict]:
                 }
             )
     return rows
+
+
+def _apply_camera_preferences(cap, *, resolution_label: str):
+    width, height = LOCAL_CAMERA_RESOLUTIONS.get(resolution_label, LOCAL_CAMERA_RESOLUTIONS["720p"])
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+
+
+def _read_camera_frame(cap, *, max_retries: int = 3):
+    for attempt in range(max_retries):
+        ret, frame = cap.read()
+        if ret:
+            return True, frame, attempt
+    return False, None, max_retries
 
 
 def render_online_monitoring(
@@ -728,8 +747,10 @@ def _render_local_camera_monitor(
     """Continuous local-device monitoring for MacBook internal camera and other local webcams."""
     camera_index = 0
     backend_key = "auto"
+    resolution_label = "720p"
+    mirror_preview = True
     if not standalone_mode:
-        setup_col1, setup_col2 = st.columns(2)
+        setup_col1, setup_col2, setup_col3, setup_col4 = st.columns(4)
         with setup_col1:
             camera_index = st.number_input(
                 "Индекс локальной камеры",
@@ -746,6 +767,15 @@ def _render_local_camera_monitor(
                 format_func=lambda key: backend_labels[key],
                 key="live_local_camera_backend",
             )
+        with setup_col3:
+            resolution_label = st.selectbox(
+                "Разрешение",
+                options=list(LOCAL_CAMERA_RESOLUTIONS.keys()),
+                index=1,
+                key="live_local_camera_resolution",
+            )
+        with setup_col4:
+            mirror_preview = st.toggle("Mirror preview", value=True, key="live_local_camera_mirror")
     if "local_camera_running" not in session_state:
         session_state.local_camera_running = False
 
@@ -775,9 +805,14 @@ def _render_local_camera_monitor(
         )
         session_state.local_camera_running = False
         return session_state.get("local_camera_last_frame_at")
+    _apply_camera_preferences(cap, resolution_label=resolution_label)
     session_state.local_camera_backend = backend_meta.get("backend_label")
+    session_state.local_camera_resolution = resolution_label
     if not standalone_mode:
-        st.caption(f"Активный backend захвата: {backend_meta.get('backend_label')}")
+        st.caption(
+            f"Активный backend захвата: {backend_meta.get('backend_label')} • "
+            f"Разрешение: {resolution_label}"
+        )
 
     frame_display = st.empty()
     start_session(
@@ -794,6 +829,7 @@ def _render_local_camera_monitor(
     last_ui_draw_ts = 0.0
     frame_counter = 0
     fps_window_start = time.time()
+    consecutive_failures = 0
 
     def register_event_pipeline(*, frame_index: int, detection: dict, source_type: str, session: dict):
         register_detection_and_entry_events(
@@ -838,12 +874,24 @@ def _render_local_camera_monitor(
         )
 
     while session_state.local_camera_running:
-        ret, frame = cap.read()
+        ret, frame, retry_attempts = _read_camera_frame(cap, max_retries=3)
         if not ret:
-            break
+            consecutive_failures += 1
+            if consecutive_failures >= 2:
+                cap.release()
+                cap, backend_meta = _open_camera_capture(int(camera_index), backend_key=backend_key)
+                if cap is None:
+                    st.error("Локальная камера потеряла поток и не смогла переподключиться.")
+                    break
+                _apply_camera_preferences(cap, resolution_label=resolution_label)
+                consecutive_failures = 0
+            continue
+        consecutive_failures = 0
         if frame_skip > 0 and frame_index % (frame_skip + 1) != 0:
             frame_index += 1
             continue
+        if mirror_preview:
+            frame = cv2.flip(frame, 1)
         frame_rgb = _process_single_frame(
             st=st,
             frame_bgr=frame,
@@ -867,6 +915,7 @@ def _render_local_camera_monitor(
         elapsed = time.time() - fps_window_start
         if elapsed > 0:
             session_state.local_camera_fps = frame_counter / elapsed
+        session_state.local_camera_retry_attempts = retry_attempts
         session_state.local_camera_last_frame_at = time.time()
         if frame_rgb is not None and time.time() - last_ui_draw_ts >= DEFAULT_UI_REFRESH_INTERVAL_SEC:
             frame_display.image(frame_rgb, channels="RGB", use_container_width=True)
@@ -1269,7 +1318,8 @@ def _render_browser_camera_monitor(
             "Ниже доступен browser snapshot, а для непрерывного потока используй локальную OpenCV-камеру."
         )
         st.caption(
-            "Техническая причина подтверждена диагностикой окружения: browser live не может стартовать без этих модулей."
+            "Техническая причина подтверждена диагностикой окружения: browser live не может стартовать без этих модулей. "
+            "Для полноценного browser live используй `.venv311` и `scripts/run_ui_py311.sh`."
         )
         shot = st.camera_input("Fallback: снимок из браузерной камеры", key=f"browser_camera_fallback_{_safe_stream_key(source_label)}")
         if shot is not None:
@@ -1281,7 +1331,8 @@ def _render_browser_camera_monitor(
     if not standalone_mode:
         st.caption(
             "Браузерная камера работает как непрерывный live mode через WebRTC. "
-            "Если соединение не устанавливается, проверь HTTPS, TURN и сетевое окружение."
+            "Если соединение не устанавливается, проверь HTTPS, TURN и сетевое окружение. "
+            "Для локального запуска используй UI из `.venv311`."
         )
 
     def _video_frame_callback(frame):

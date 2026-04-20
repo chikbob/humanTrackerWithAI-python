@@ -114,6 +114,27 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### 1a. Отдельное окружение для browser live на Python 3.11
+
+Для `WebRTC live` на macOS рекомендуется отдельное окружение `.venv311`:
+
+```bash
+brew install python@3.11
+scripts/setup_py311_env.sh
+```
+
+Запуск UI из этого окружения:
+
+```bash
+scripts/run_ui_py311.sh
+```
+
+Запуск worker из этого окружения:
+
+```bash
+scripts/run_worker_py311.sh
+```
+
 ### 2. Запуск UI
 
 ```bash
@@ -248,6 +269,16 @@ cp .env.example .env
 
 Если проект запускается через `docker compose`, то `coturn` поднимается вместе с приложением и значения по умолчанию уже прокинуты в `ui` и `worker`.
 
+Локально самый короткий рабочий путь теперь такой:
+
+```bash
+scripts/setup_py311_env.sh
+scripts/run_ui_py311.sh
+```
+
+На macOS возможны предупреждения вида `AVFFrameReceiver is implemented in both ... cv2 ... and ... av ...`.
+В текущей конфигурации это не блокирует импорт приложения, но относится к особенностям совместной поставки `OpenCV` и `PyAV`.
+
 ### Реально рабочий browser live для production
 
 Рекомендуемый сценарий:
@@ -294,6 +325,12 @@ cp .env.example .env
 - отдельное окно для любого источника через query params `view=live-window&source_id=...&source_kind=...`;
 - production-источники отображаются через актуальные snapshots и worker status;
 - browser/local источники поднимаются как foreground live mode только для главного окна, чтобы не дублировать production pipeline;
+- локальная камера MacBook усилена для демонстрации:
+  - выбор backend захвата;
+  - выбор разрешения;
+  - mirror preview;
+  - диагностика backend-ов;
+  - авто-переподключение при потере кадров;
 - статусная панель:
   - `FPS`
   - `confidence threshold`
