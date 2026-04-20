@@ -135,6 +135,16 @@ def _notify_once_for_track(session: dict, track_key: Optional[str], flag_name: s
     return True
 
 
+def _remember_entry_attempt(session: dict, track_key: Optional[str], timestamp_value: float):
+    if track_key is None:
+        return []
+    attempts = session["track_entry_timestamps"].setdefault(track_key, [])
+    attempts = [entry_ts for entry_ts in attempts if timestamp_value - entry_ts <= 60.0]
+    attempts.append(timestamp_value)
+    session["track_entry_timestamps"][track_key] = attempts
+    return attempts
+
+
 def register_raw_detection_events(
     session_state,
     db_insert_event,
@@ -312,9 +322,30 @@ def register_entry_zone_domain_events(
             message="Человек обнаружен рядом со входной зоной",
             access_point_id=settings.get("default_access_point_id"),
         )
+    if _notify_once_for_track(session, track_key, "unknown_person_detected"):
+        create_domain_entry_event(
+            session_state,
+            db_insert_event,
+            session=session,
+            event_type="unknown_person_detected",
+            source_type=source_type,
+            frame_index=frame_index,
+            class_name="person",
+            confidence=detection["confidence"],
+            track_id=detection.get("track_id"),
+            roi_inside=detection.get("roi_inside", False),
+            center_x=detection.get("center_x"),
+            center_y=detection.get("center_y"),
+            frame_width=detection.get("frame_width"),
+            frame_height=detection.get("frame_height"),
+            message="Личность человека не установлена; требуется последующее сопоставление с сотрудником",
+            access_point_id=settings.get("default_access_point_id"),
+            identification_status="not_configured",
+        )
 
     # Transition into the entry zone.
     if detection.get("roi_enter") and _notify_once_for_track(session, track_key, "person_entered_entry_zone"):
+        entry_attempts = _remember_entry_attempt(session, track_key, now_ts)
         create_domain_entry_event(
             session_state,
             db_insert_event,
@@ -335,6 +366,27 @@ def register_entry_zone_domain_events(
         )
         if settings["enable_notifications"]:
             notify_callback("Событие проходной: человек вошел во входную зону")
+        repeated_entry_cooldown = float(settings.get("event_cooldown", 5))
+        if len(entry_attempts) >= 2 and (entry_attempts[-1] - entry_attempts[-2]) <= repeated_entry_cooldown:
+            if _notify_once_for_track(session, track_key, "repeated_entry_attempt"):
+                create_domain_entry_event(
+                    session_state,
+                    db_insert_event,
+                    session=session,
+                    event_type="repeated_entry_attempt",
+                    source_type=source_type,
+                    frame_index=frame_index,
+                    class_name="person",
+                    confidence=detection["confidence"],
+                    track_id=detection.get("track_id"),
+                    roi_inside=True,
+                    center_x=detection.get("center_x"),
+                    center_y=detection.get("center_y"),
+                    frame_width=detection.get("frame_width"),
+                    frame_height=detection.get("frame_height"),
+                    message="Зафиксирована повторная попытка входа в контролируемую зону за короткий интервал",
+                    access_point_id=settings.get("default_access_point_id"),
+                )
 
     # Explicit exit from the entry zone while the track is still visible.
     if detection.get("roi_exit") and _notify_once_for_track(session, track_key, "person_left_entry_zone"):
@@ -503,3 +555,4 @@ def process_disappeared_tracks(
             session["disappeared_track_keys"].discard(track_key)
             session["track_first_seen"].pop(track_key, None)
             session["track_domain_flags"].pop(track_key, None)
+            session["track_entry_timestamps"].pop(track_key, None)

@@ -28,6 +28,8 @@ def ensure_runtime_state(session: dict):
         session["track_first_seen"] = {}
     if "track_domain_flags" not in session or not isinstance(session["track_domain_flags"], dict):
         session["track_domain_flags"] = {}
+    if "track_entry_timestamps" not in session or not isinstance(session["track_entry_timestamps"], dict):
+        session["track_entry_timestamps"] = {}
 
 
 def init_session_state(session_state, load_history_from_db):
@@ -96,6 +98,7 @@ def start_session(
         "rule_last_alert_ts": {},
         "track_first_seen": {},
         "track_domain_flags": {},
+        "track_entry_timestamps": {},
         "frames": [],
     }
     session_state.current_session_id = session_id

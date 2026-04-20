@@ -336,6 +336,27 @@ def init_db():
             """,
             (key, value, time.time()),
         )
+    access_point_count = conn.execute("SELECT COUNT(*) AS cnt FROM access_points").fetchone()["cnt"]
+    if access_point_count == 0:
+        cursor = conn.execute(
+            """
+            INSERT INTO access_points (name, location, description)
+            VALUES (?, ?, ?)
+            """,
+            (
+                "Главная проходная",
+                "Входная зона предприятия",
+                "Базовая точка доступа для мониторинга прохода сотрудников.",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO system_settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """,
+            ("active_access_point_id", str(cursor.lastrowid), time.time()),
+        )
     conn.commit()
     conn.close()
 
@@ -619,6 +640,19 @@ def load_employees():
     return [dict(row) for row in rows]
 
 
+def load_access_points():
+    conn = get_db_conn()
+    rows = conn.execute(
+        """
+        SELECT id, name, location, description
+        FROM access_points
+        ORDER BY name ASC
+        """
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 def create_employee(*, full_name: str, department: str, position: str, status: str):
     conn = get_db_conn()
     conn.execute(
@@ -724,6 +758,54 @@ def load_access_logs():
         ORDER BY access_logs.timestamp DESC
         """
     ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def load_events(limit=None):
+    conn = get_db_conn()
+    query = """
+        SELECT
+            events.event_id,
+            events.session_id,
+            events.event_type,
+            events.source_type,
+            events.frame_index,
+            events.timestamp,
+            events.class_name,
+            events.confidence,
+            events.track_id,
+            events.animal_group,
+            events.is_animal,
+            events.roi_inside,
+            events.center_x,
+            events.center_y,
+            events.frame_width,
+            events.frame_height,
+            events.message,
+            events.event_scope,
+            events.access_log_id,
+            events.employee_id,
+            events.access_point_id,
+            events.identified_employee_id,
+            events.identification_confidence,
+            events.identification_status,
+            sessions.source_path,
+            sessions.model,
+            employees.full_name AS employee_name,
+            access_points.name AS access_point_name
+        FROM events
+        LEFT JOIN sessions ON sessions.id = events.session_id
+        LEFT JOIN access_logs ON access_logs.id = events.access_log_id
+        LEFT JOIN employees ON employees.id = COALESCE(events.employee_id, events.identified_employee_id, access_logs.employee_id)
+        LEFT JOIN access_points ON access_points.id = COALESCE(events.access_point_id, access_logs.access_point_id)
+        ORDER BY events.timestamp DESC
+    """
+    params = ()
+    if limit is not None:
+        query += " LIMIT ?"
+        params = (limit,)
+    rows = conn.execute(query, params).fetchall()
     conn.close()
     return [dict(row) for row in rows]
 
