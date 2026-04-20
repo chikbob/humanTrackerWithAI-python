@@ -83,7 +83,7 @@ def main():
         "notify_conf_threshold": notify_conf_threshold,
         "notify_classes": secondary_config["notify_classes"],
         "enable_roi": roi_config["enable_roi"],
-        # ROI in this project is interpreted as the enterprise entry zone.
+        # ROI в текущей прикладной постановке интерпретируется как контролируемая входная зона предприятия.
         "default_access_point_id": None,
         "prolonged_presence_seconds": 10,
     }
@@ -97,7 +97,7 @@ def main():
         )
 
     def register_event_pipeline(*, frame_index: int, detection: dict, source_type: str, session: dict):
-        # Split CV telemetry from domain events of the entry-zone monitoring model.
+        # Разделение низкоуровневой телеметрии детекции и предметно-ориентированных событий мониторинга.
         register_detection_and_entry_events(
             st.session_state,
             db_insert_event,
@@ -130,7 +130,7 @@ def main():
 
     with work_col:
         with st.container(border=True):
-            st.subheader("🎥 Онлайн-мониторинг входной зоны")
+            st.subheader("🎥 Мониторинг входной зоны в реальном времени")
             frame_display = st.empty()
 
             if source_mode == "📁 Загрузить фото":
@@ -197,7 +197,7 @@ def main():
 
             elif source_mode == "🎞️ Загрузить видео":
                 uploaded_video = st.file_uploader(
-                    "Загрузите видео с проходной",
+                    "Загрузите видео входной зоны предприятия",
                     type=["mp4", "avi", "mov"],
                     key="video_uploader",
                 )
@@ -219,7 +219,7 @@ def main():
                     temp_video.close()
 
                     cap = cv2.VideoCapture(temp_path)
-                    st.info("▶️ Идет анализ видеопотока проходной...")
+                    st.info("▶️ Выполняется интеллектуальный анализ видеопотока входной зоны...")
                     frame_index = 0
                     last_ui_draw_ts = 0.0
 
@@ -294,7 +294,7 @@ def main():
 
                 if camera_mode == "Браузерная камера RT":
                     if not WEBRTC_AVAILABLE:
-                        st.error("Для онлайн-мониторинга установите зависимость streamlit-webrtc.")
+                        st.error("Для режима онлайн-мониторинга установите зависимость streamlit-webrtc.")
                     else:
                         if "browser_rt_on" not in st.session_state:
                             st.session_state.browser_rt_on = False
@@ -311,7 +311,7 @@ def main():
                             st.session_state.browser_rt_on = False
                             st.success("🛑 Мониторинг камеры остановлен.")
 
-                        st.caption("Нажмите Start в виджете камеры и разрешите доступ к камере проходной в браузере.")
+                        st.caption("Нажмите Start в виджете камеры и разрешите доступ к видеоустройству входной зоны в браузере.")
 
                         def _video_frame_callback(frame):
                             frame_bgr = frame.to_ndarray(format="bgr24")
@@ -346,8 +346,8 @@ def main():
                             st.info("Нажмите «Запустить камеру», чтобы начать онлайн-мониторинг входной зоны.")
 
                 elif camera_mode == "Браузерная камера (снимок)":
-                    st.info("Режим снимка: сделайте фото входной зоны предприятия.")
-                    shot = st.camera_input("Снимок с камеры проходной", key="browser_cam_input")
+                    st.info("Режим снимка: выполните захват изображения входной зоны предприятия.")
+                    shot = st.camera_input("Снимок с камеры входной зоны", key="browser_cam_input")
                     if shot is not None:
                         start_session(
                             st.session_state,
@@ -427,14 +427,14 @@ def main():
                                 track_classes=track_classes,
                                 rotation_angle=rotation_angle,
                             )
-                            st.info("✅ Мониторинг входной зоны запущен. Идет сопровождение людей в зоне прохода.")
+                            st.info("✅ Мониторинг входной зоны запущен. Выполняется сопровождение объектов в зоне прохода.")
                             prev_time = time.time()
                             frame_index = 0
 
                             while st.session_state.running:
                                 ret, frame = cap.read()
                                 if not ret:
-                                    st.warning("⚠️ Кадр с камеры проходной не получен.")
+                                    st.warning("⚠️ Кадр с видеоустройства входной зоны не получен.")
                                     break
                                 if frame_skip > 0 and frame_index % (frame_skip + 1) != 0:
                                     frame_index += 1
@@ -482,7 +482,7 @@ def main():
                             st.session_state.running = False
                             st.success("🛑 Мониторинг входной зоны остановлен.")
                     else:
-                        st.info("Нажмите «Запустить мониторинг», чтобы начать обработку камеры проходной.")
+                        st.info("Нажмите «Запустить мониторинг», чтобы начать обработку видеопотока входной зоны.")
 
     with info_col:
         render_status_panel(

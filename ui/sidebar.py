@@ -22,7 +22,7 @@ ROTATION_MAP = {"0°": 0, "90° вправо": 90, "180°": 180, "90° влев�
 
 
 def render_primary_sidebar(st):
-    st.sidebar.header("⚙️ Параметры проходной")
+    st.sidebar.header("⚙️ Параметры системы")
     model_choice = st.sidebar.selectbox("Модель анализа видеопотока", options=MODEL_OPTIONS, index=1)
     source_mode = st.sidebar.radio(
         "Источник данных входной зоны",
@@ -32,14 +32,14 @@ def render_primary_sidebar(st):
     show_advanced = st.sidebar.checkbox("Показать расширенные настройки", value=False)
     rotation_choice = st.sidebar.selectbox("Поворот изображения камеры", ROTATION_OPTIONS, index=0)
     conf_threshold = st.sidebar.slider("Порог уверенности детекции", 0.1, 0.95, 0.5, 0.05)
-    notify_conf_threshold = st.sidebar.slider("Порог уведомлений проходной", 0.1, 0.95, 0.5, 0.05)
+    notify_conf_threshold = st.sidebar.slider("Порог формирования уведомлений", 0.1, 0.95, 0.5, 0.05)
     inference_size = st.sidebar.selectbox(
         "Размер кадра для инференса",
         options=INFERENCE_SIZE_OPTIONS,
         index=INFERENCE_SIZE_OPTIONS.index(DEFAULT_INFERENCE_SIZE),
     )
     frame_skip = st.sidebar.slider("Пропуск кадров", 0, 5, DEFAULT_FRAME_SKIP, 1)
-    enable_notifications = st.sidebar.checkbox("Включить уведомления дежурному", value=True)
+    enable_notifications = st.sidebar.checkbox("Включить уведомления оператора", value=True)
     st.session_state.rotation_angle = ROTATION_MAP[rotation_choice]
     return {
         "model_choice": model_choice,
@@ -61,7 +61,7 @@ def render_detection_sidebar(st, all_class_names: list[str], show_advanced: bool
         default=[cls for cls in ["person"] if cls in all_class_names],
     )
     st.sidebar.markdown("---")
-    st.sidebar.caption("Порядок работы: выберите источник входной зоны, запустите анализ и просматривайте журнал проходов.")
+    st.sidebar.caption("Выберите источник данных, запустите мониторинг и анализируйте журнал событий входной зоны.")
 
     animal_filter = "всё"
     track_classes = []
@@ -82,7 +82,7 @@ def render_detection_sidebar(st, all_class_names: list[str], show_advanced: bool
         )
         track_classes = st.sidebar.multiselect("Фильтр по классам", options=all_class_names, default=[])
 
-        st.sidebar.subheader("Входная зона и правила прохода")
+        st.sidebar.subheader("Входная зона и аналитические правила")
         enable_roi = st.sidebar.checkbox("Включить контроль входной зоны", value=True)
         roi_x = st.sidebar.slider("Входная зона X (%)", 0, 95, 20, 1)
         roi_y = st.sidebar.slider("Входная зона Y (%)", 0, 95, 20, 1)
