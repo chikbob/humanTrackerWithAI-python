@@ -16,7 +16,7 @@ from PIL import Image
 import streamlit.components.v1 as components
 
 from analytics.access import build_monitoring_source_cards
-from config.rtc_config import build_rtc_configuration
+from config.rtc_config import build_rtc_configuration, describe_rtc_environment
 from core.detection import track_and_draw_live
 from services.events import add_notification, process_disappeared_tracks, register_detection_and_entry_events
 from services.state import finish_session, get_current_session, log_frame, start_session
@@ -131,6 +131,71 @@ def _detect_alt_webrtc_runtime() -> str:
     return str(alt_runtime) if alt_runtime.exists() else ""
 
 
+def _record_interactive_frame(session_state, stream_key: str):
+    now_ts = time.time()
+    frame_counter_key = f"{stream_key}_frame_counter"
+    window_started_key = f"{stream_key}_window_started_at"
+    last_frame_key = f"{stream_key}_last_frame_at"
+    fps_key = f"{stream_key}_fps"
+
+    if not session_state.get(window_started_key):
+        session_state[window_started_key] = now_ts
+        session_state[frame_counter_key] = 0
+
+    session_state[frame_counter_key] = int(session_state.get(frame_counter_key, 0)) + 1
+    elapsed = max(now_ts - float(session_state.get(window_started_key, now_ts)), 1e-6)
+    session_state[fps_key] = session_state[frame_counter_key] / elapsed
+    session_state[last_frame_key] = now_ts
+    return now_ts
+
+
+def _resolve_stream_mode_label(binding: dict) -> str:
+    if binding["kind"] == "production":
+        return "Server pipeline"
+    if binding["kind"] == "local_camera":
+        return "Local device"
+    return "Browser live"
+
+
+def _resolve_source_name(binding: dict, selected_source) -> str:
+    if binding["kind"] == "production" and selected_source is not None:
+        return selected_source["name"]
+    if binding["kind"] == "local_camera":
+        return "Встроенная камера MacBook"
+    return "Браузерная камера"
+
+
+def _get_request_host(st) -> str:
+    context = getattr(st, "context", None)
+    headers = getattr(context, "headers", None)
+    if not headers:
+        return ""
+    host = headers.get("host") or headers.get("Host") or ""
+    return str(host).strip().lower()
+
+
+def _is_https_request(st) -> bool:
+    context = getattr(st, "context", None)
+    headers = getattr(context, "headers", None)
+    if not headers:
+        return False
+    proto = (headers.get("x-forwarded-proto") or headers.get("X-Forwarded-Proto") or "").lower()
+    if proto:
+        return proto == "https"
+    origin = (headers.get("origin") or headers.get("Origin") or "").lower()
+    return origin.startswith("https://")
+
+
+def _is_local_browser_session(st) -> bool:
+    host = _get_request_host(st)
+    return host.startswith("localhost") or host.startswith("127.0.0.1") or host.startswith("0.0.0.0")
+
+
+def _is_remote_host_session(st) -> bool:
+    host = _get_request_host(st)
+    return bool(host) and not _is_local_browser_session(st)
+
+
 def render_online_monitoring(
     st,
     *,
@@ -148,7 +213,6 @@ def render_online_monitoring(
     db_insert_event,
     db_insert_frame,
     db_upsert_session,
-    demo_mode: bool,
     preferred_source: str = "",
     preferred_source_id: str = "",
     preferred_source_kind: str = "",
@@ -216,7 +280,7 @@ def render_online_monitoring(
                 value=bool(session_state.get("monitoring_embed_secondary_live", True)),
                 help="Дополнительные browser/local источники будут открываться как встроенные standalone-view. Это тяжелее по ресурсам, но позволяет видеть несколько интерактивных камер сразу.",
             )
-        selected_bindings = _prioritize_primary_binding(selected_bindings, primary_binding)
+    selected_bindings = _prioritize_primary_binding(selected_bindings, primary_binding)
 
     selected_binding = primary_binding
     selected_source = selected_binding["source"]
@@ -253,6 +317,49 @@ def render_online_monitoring(
         )
 
     left_col, right_col = st.columns([2.2, 0.9], gap="large")
+    with right_col:
+        state_panel_placeholder = st.empty()
+        statuses_panel_placeholder = st.empty()
+
+    def _render_status_sidebars():
+        with state_panel_placeholder.container(border=True):
+            st.subheader("Панель состояния")
+            if selected_binding["kind"] == "production":
+                status_fps = round(selected_status.get("fps") or 0.0, 2)
+            elif selected_binding["kind"] == "local_camera":
+                status_fps = round(session_state.get("local_camera_fps") or 0.0, 2)
+            elif selected_binding["kind"] == "browser_camera":
+                browser_fps = session_state.get("browser_camera_fps")
+                status_fps = round(browser_fps or 0.0, 2) if browser_fps else "—"
+            else:
+                status_fps = "—"
+            st.metric("FPS", status_fps)
+            st.metric("Режим потока", _resolve_stream_mode_label(selected_binding))
+            st.metric("Порог confidence", round(conf_threshold, 2))
+            st.metric("Источник потока", _resolve_source_name(selected_binding, selected_source))
+            st.metric("Активная модель", model_name)
+            st.metric("Точка прохода", access_point_name)
+            st.metric("Последний кадр", _fmt_ts(_resolve_binding_last_frame_at(selected_binding, session_state)))
+            if selected_status.get("last_error"):
+                st.error(selected_status["last_error"])
+
+        with statuses_panel_placeholder.container(border=True):
+            st.subheader("Статусы источников")
+            for binding in displayed_bindings:
+                card = source_cards.get(binding.get("source_id"), {})
+                st.markdown(
+                    _render_source_status_badge(
+                        title=binding["name"],
+                        source_type=binding["kind_label"],
+                        status=_resolve_binding_status(binding, session_state, source_card=card),
+                        fps=_resolve_binding_fps(binding, session_state, source_card=card),
+                        last_frame_at=_fmt_ts(_resolve_binding_last_frame_at(binding, session_state)),
+                        recent_event_count=card.get("recent_event_count", 0),
+                        error_text=card.get("last_error") or "",
+                        live_window_url=_build_live_window_url(binding, overlay_enabled=True),
+                    ),
+                    unsafe_allow_html=True,
+                )
 
     _render_monitoring_wall_summary(
         st,
@@ -261,6 +368,7 @@ def render_online_monitoring(
         worker_statuses=worker_statuses,
         source_cards=source_cards,
     )
+    _render_status_sidebars()
 
     with left_col:
         with st.container(border=True):
@@ -300,6 +408,7 @@ def render_online_monitoring(
                 db_upsert_session=db_upsert_session,
                 layout_mode=layout_mode,
                 embed_secondary_live=bool(session_state.get("monitoring_embed_secondary_live", False)),
+                status_panel_callback=_render_status_sidebars,
             )
 
         with st.container(border=True):
@@ -313,61 +422,15 @@ def render_online_monitoring(
                 }
                 for event in events[:12]
             ]
-            st.dataframe(pd.DataFrame(latest_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(latest_rows), width="stretch", hide_index=True)
 
-    with right_col:
-        with st.container(border=True):
-            st.subheader("Панель состояния")
-            if selected_binding["kind"] == "production":
-                status_fps = round(selected_status.get("fps") or 0.0, 2)
-            elif selected_binding["kind"] == "local_camera":
-                status_fps = round(session_state.get("local_camera_fps") or 0.0, 2)
-            else:
-                status_fps = "—"
-            st.metric("FPS", status_fps)
-            if selected_binding["kind"] == "production":
-                stream_mode_label = "Server pipeline"
-            elif selected_binding["kind"] == "local_camera":
-                stream_mode_label = "Local device"
-            else:
-                stream_mode_label = "Browser live"
-            st.metric("Режим потока", stream_mode_label)
-            st.metric("confidence threshold", round(conf_threshold, 2))
-            if selected_binding["kind"] == "production" and selected_source is not None:
-                source_name = selected_source["name"]
-            elif selected_binding["kind"] == "local_camera":
-                source_name = "Встроенная камера MacBook"
-            else:
-                source_name = "Браузерная камера"
-            st.metric("Источник потока", source_name)
-            st.metric("Активная модель", model_name)
-            st.metric("Точка прохода", access_point_name)
-            st.metric("Последний кадр", _fmt_ts(selected_last_frame_at))
-            if selected_status.get("last_error"):
-                st.error(selected_status["last_error"])
-        with st.container(border=True):
-            st.subheader("Статусы источников")
-            for binding in displayed_bindings:
-                card = source_cards.get(binding.get("source_id"), {})
-                st.markdown(
-                    _render_source_status_badge(
-                        title=binding["name"],
-                        source_type=binding["kind_label"],
-                        status=_resolve_binding_status(binding, session_state, source_card=card),
-                        fps=_resolve_binding_fps(binding, session_state, source_card=card),
-                        last_frame_at=_fmt_ts(_resolve_binding_last_frame_at(binding, session_state)),
-                        recent_event_count=card.get("recent_event_count", 0),
-                        error_text=card.get("last_error") or "",
-                        live_window_url=_build_live_window_url(binding, overlay_enabled=True),
-                    ),
-                    unsafe_allow_html=True,
-                )
+    _render_status_sidebars()
 
     if not standalone_mode:
-        with st.expander("Демо и fallback режимы", expanded=demo_mode):
+        with st.expander("Демонстрационные сценарии и fallback", expanded=False):
             st.caption(
-                "Этот блок сохраняет демонстрационные сценарии: загрузку видеофайла, снимка, браузерную камеру "
-                "и локальную камеру. Основной production-путь должен использовать серверный источник и фоновый worker."
+                "Этот блок содержит загрузку файлов и fallback-режимы для локальной демонстрации. "
+                "Production-путь должен использовать worker и server-side источники."
             )
             _render_demo_workspace(
                 st,
@@ -478,7 +541,8 @@ def _resolve_binding_fps(binding: dict, session_state, *, source_card: dict | No
     if binding["kind"] == "local_camera":
         return round(session_state.get("local_camera_fps") or 0.0, 2)
     if binding["kind"] == "browser_camera":
-        return "—"
+        browser_fps = session_state.get("browser_camera_fps")
+        return round(browser_fps or 0.0, 2) if browser_fps else "—"
     return source_card.get("fps")
 
 
@@ -518,6 +582,7 @@ def _render_source_layout(
     db_upsert_session,
     layout_mode: str,
     embed_secondary_live: bool,
+    status_panel_callback=None,
 ):
     if layout_mode == "list":
         for binding in bindings:
@@ -537,6 +602,7 @@ def _render_source_layout(
                 db_insert_frame=db_insert_frame,
                 db_upsert_session=db_upsert_session,
                 embed_secondary_live=embed_secondary_live,
+                status_panel_callback=status_panel_callback,
             )
         return
 
@@ -560,6 +626,7 @@ def _render_source_layout(
                     db_insert_frame=db_insert_frame,
                     db_upsert_session=db_upsert_session,
                     embed_secondary_live=embed_secondary_live,
+                    status_panel_callback=status_panel_callback,
                 )
         return
 
@@ -580,6 +647,7 @@ def _render_source_layout(
             db_insert_frame=db_insert_frame,
             db_upsert_session=db_upsert_session,
             embed_secondary_live=embed_secondary_live,
+            status_panel_callback=status_panel_callback,
         )
 
 
@@ -600,6 +668,7 @@ def _render_source_tile(
     db_insert_frame,
     db_upsert_session,
     embed_secondary_live: bool,
+    status_panel_callback=None,
 ):
     with st.container(border=True):
         badge = "Главный источник" if is_primary else "Дополнительный источник"
@@ -621,7 +690,7 @@ def _render_source_tile(
         if binding["kind"] == "production" and binding["source"] is not None:
             snapshot_path = binding["status"].get("last_snapshot_path")
             if snapshot_path and Path(snapshot_path).exists():
-                st.image(snapshot_path, use_container_width=True)
+                st.image(snapshot_path, width="stretch")
             else:
                 st.info("Worker еще не сохранил snapshot для этого источника.")
             if source_card.get("last_error"):
@@ -652,6 +721,7 @@ def _render_source_tile(
                 db_insert_event=db_insert_event,
                 db_insert_frame=db_insert_frame,
                 db_upsert_session=db_upsert_session,
+                status_panel_callback=status_panel_callback,
             )
             return
 
@@ -816,7 +886,7 @@ def _render_standalone_live_window(
     if selected_binding["kind"] == "production" and selected_source is not None:
         snapshot_path = selected_status.get("last_snapshot_path")
         if snapshot_path and Path(snapshot_path).exists():
-            st.image(snapshot_path, use_container_width=True)
+            st.image(snapshot_path, width="stretch")
         else:
             st.warning("Для production-источника пока нет актуального snapshot от worker.")
     elif selected_binding["kind"] == "local_camera":
@@ -866,8 +936,19 @@ def _render_local_camera_monitor(
     db_insert_frame,
     db_upsert_session,
     standalone_mode: bool = False,
+    status_panel_callback=None,
 ):
     """Continuous local-device monitoring for MacBook internal camera and other local webcams."""
+    if _is_remote_host_session(st):
+        st.error(
+            "Режим «Локальная камера MacBook» доступен только при локальном запуске UI на той же машине, "
+            "где физически подключена камера."
+        )
+        st.info(
+            "Для удаленного хоста используйте Browser live/WebRTC или production-источник RTSP/HLS/USB на стороне сервера."
+        )
+        return session_state.get("local_camera_last_frame_at")
+
     camera_index = 0
     backend_key = "auto"
     resolution_label = "720p"
@@ -913,7 +994,7 @@ def _render_local_camera_monitor(
             if st.button("Остановить локальную камеру", key="live_local_camera_stop"):
                 session_state.local_camera_running = False
         with st.expander("Диагностика локальной камеры", expanded=False):
-            st.dataframe(pd.DataFrame(_probe_camera_backends(int(camera_index))), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(_probe_camera_backends(int(camera_index))), width="stretch", hide_index=True)
 
     if not session_state.local_camera_running:
         st.info("Запустите локальную камеру для непрерывного мониторинга.")
@@ -1039,9 +1120,11 @@ def _render_local_camera_monitor(
         if elapsed > 0:
             session_state.local_camera_fps = frame_counter / elapsed
         session_state.local_camera_retry_attempts = retry_attempts
-        session_state.local_camera_last_frame_at = time.time()
+        _record_interactive_frame(session_state, "local_camera")
+        if status_panel_callback is not None:
+            status_panel_callback()
         if frame_rgb is not None and time.time() - last_ui_draw_ts >= DEFAULT_UI_REFRESH_INTERVAL_SEC:
-            frame_display.image(frame_rgb, channels="RGB", use_container_width=True)
+            frame_display.image(frame_rgb, channels="RGB", width="stretch")
             last_ui_draw_ts = time.time()
         frame_index += 1
 
@@ -1411,29 +1494,36 @@ def _render_browser_camera_monitor(
             ),
             draw_now=True,
         )
-        session_state.browser_camera_last_frame_at = time.time()
+        _record_interactive_frame(session_state, "browser_camera")
         finish_session(session_state, db_upsert_session)
         return session_state.get("browser_camera_last_frame_at")
 
     if method == "Диагностика":
         alt_runtime = _detect_alt_webrtc_runtime()
+        rtc_diag = describe_rtc_environment()
+        request_mode = "remote" if _is_remote_host_session(st) else "local"
         st.warning(
             "Ниже показана реальная диагностика окружения. Если WebRTC недоступен, браузерный live-поток "
             "в этом окружении не заработает без установки зависимостей и корректного HTTPS/TURN."
         )
         diag_rows = [
             {"Проверка": "Python executable", "Статус": sys.executable},
+            {"Проверка": "Browser session", "Статус": request_mode},
+            {"Проверка": "HTTPS", "Статус": "yes" if _is_https_request(st) else "no"},
             {"Проверка": "OpenCV", "Статус": cv2.__version__},
             {"Проверка": "PyAV", "Статус": "ok" if av is not None else "missing"},
             {"Проверка": "streamlit-webrtc", "Статус": "ok" if webrtc_streamer is not None else "missing"},
             {"Проверка": "RTC config", "Статус": "configured" if RTC_CONFIG is not None else "empty"},
+            {"Проверка": "ICE servers", "Статус": rtc_diag["ice_server_count"]},
+            {"Проверка": "STUN", "Статус": "configured" if rtc_diag["has_stun"] else "missing"},
+            {"Проверка": "TURN", "Статус": "configured" if rtc_diag["has_turn"] else "missing"},
             {"Проверка": "Browser snapshot", "Статус": "available"},
             {"Проверка": "Alt WebRTC runtime", "Статус": alt_runtime or "not_found"},
         ]
-        st.dataframe(pd.DataFrame(diag_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(diag_rows), width="stretch", hide_index=True)
         st.caption(
-            "Для локального all-time мониторинга на MacBook используй «Локальная камера MacBook». "
-            "Для браузерного live здесь нужен рабочий `streamlit-webrtc` + `av`."
+            "Для browser live нужны рабочие `streamlit-webrtc` + `av`, HTTPS на удаленном хосте и ICE servers "
+            "с TURN для проблемных сетей/NAT."
         )
         return session_state.get("browser_camera_last_frame_at")
 
@@ -1452,16 +1542,23 @@ def _render_browser_camera_monitor(
         shot = st.camera_input("Fallback: снимок из браузерной камеры", key=f"browser_camera_fallback_{_safe_stream_key(source_label)}")
         if shot is not None:
             image = Image.open(shot).convert("RGB")
-            st.image(image, caption="Получен кадр из браузерной камеры", use_container_width=True)
-            session_state.browser_camera_last_frame_at = time.time()
+            st.image(image, caption="Получен кадр из браузерной камеры", width="stretch")
+            _record_interactive_frame(session_state, "browser_camera")
         return session_state.get("browser_camera_last_frame_at")
 
     if not standalone_mode:
+        rtc_diag = describe_rtc_environment()
         st.caption(
             "Браузерная камера работает как непрерывный live mode через WebRTC. "
             "Если соединение не устанавливается, проверь HTTPS, TURN и сетевое окружение. "
             "Для локального запуска используй UI из `.venv311`."
         )
+        if _is_remote_host_session(st) and not _is_https_request(st):
+            st.warning("Удаленная browser-сессия работает без HTTPS. Для стабильного WebRTC это критичный риск.")
+        if rtc_diag["ice_server_count"] == 0:
+            st.error("RTC configuration не содержит ICE servers. Настрой STUN_URLS и TURN_URLS.")
+        elif not rtc_diag["has_turn"] and _is_remote_host_session(st):
+            st.warning("TURN не настроен. На удаленном хосте это частая причина подвисания ICE-соединения.")
 
     def _video_frame_callback(frame):
         frame_bgr = frame.to_ndarray(format="bgr24")
@@ -1477,7 +1574,7 @@ def _render_browser_camera_monitor(
             roi_config={"enable_roi": True, "roi_x": 20, "roi_y": 20, "roi_w": 60, "roi_h": 60},
             draw_box_fn=draw_fancy_box,
         )
-        session_state.browser_camera_last_frame_at = time.time()
+        _record_interactive_frame(session_state, "browser_camera")
         return av.VideoFrame.from_ndarray(cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR), format="bgr24")
 
     webrtc_streamer(

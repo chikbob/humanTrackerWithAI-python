@@ -26,6 +26,7 @@ from db.repository import (
     reset_and_seed_demo_data,
     set_system_setting,
     set_video_source_active,
+    link_event_to_employee,
     upsert_employee_sync_state,
     update_employee,
     update_employee_status,
@@ -90,13 +91,11 @@ def main():
     if standalone_live_mode:
         sidebar_state = {
             "section": "Онлайн-мониторинг",
-            "demo_mode": False,
             "model_name": system_settings.get("model_name", "yolov8s.pt"),
         }
     else:
         sidebar_state = render_app_sidebar(st, video_sources=video_sources, system_settings=system_settings)
-        if sidebar_state["demo_mode"]:
-            ensure_demo_employees()
+        ensure_demo_employees()
 
     access_points = load_access_points()
     employee_repository = build_employee_repository(
@@ -167,7 +166,6 @@ def main():
             db_insert_event=db_insert_event,
             db_insert_frame=db_insert_frame,
             db_upsert_session=db_upsert_session,
-            demo_mode=sidebar_state["demo_mode"],
             preferred_source=preferred_live_source,
             preferred_source_id=preferred_live_source_id,
             preferred_source_kind=preferred_live_source_kind,
@@ -187,7 +185,12 @@ def main():
             update_employee_status_fn=update_employee_status,
         )
     elif section == "Журнал событий":
-        render_event_journal(st, events=events)
+        render_event_journal(
+            st,
+            events=events,
+            employees=employees,
+            link_event_to_employee_fn=link_event_to_employee,
+        )
     elif section == "Аналитика":
         render_access_analytics(st, events=events, worker_statuses=worker_statuses)
     elif section == "Источники видео":

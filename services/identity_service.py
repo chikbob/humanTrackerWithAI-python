@@ -12,15 +12,16 @@ from typing import Optional
 
 
 IDENTIFICATION_STATUSES = {
-    "not_configured",
     "no_reference_data",
     "not_enough_reference_data",
     "db_unavailable",
     "low_confidence",
-    "ambiguous_match",
     "inactive_employee",
     "unknown",
-    "verified",
+    "unlinked",
+    "pending_operator_confirmation",
+    "linked_from_directory",
+    "linked_from_access_control",
 }
 
 
@@ -37,7 +38,7 @@ def get_identity_placeholder_result(identity_state: Optional[dict] = None) -> di
 def resolve_identification_status(identity_state: Optional[dict] = None) -> str:
     """Map the current employee directory state to an honest identification status."""
     if not identity_state:
-        return "not_configured"
+        return "unlinked"
 
     sync_status = identity_state.get("sync_status") or "unknown"
     sync_error = (identity_state.get("sync_error") or "").strip()
@@ -53,7 +54,7 @@ def resolve_identification_status(identity_state: Optional[dict] = None) -> str:
         return "no_reference_data"
     if reference_employee_count < min(active_employee_count, 3):
         return "not_enough_reference_data"
-    return "unknown"
+        return "unknown"
 
 
 def build_identity_result(
@@ -68,7 +69,7 @@ def build_identity_result(
         return {
             "identified_employee_id": None,
             "identification_confidence": confidence,
-            "identification_status": "ambiguous_match",
+            "identification_status": "pending_operator_confirmation",
         }
     if identified_employee is None:
         return get_identity_placeholder_result(identity_state)
@@ -82,7 +83,7 @@ def build_identity_result(
         return {
             "identified_employee_id": identified_employee.get("id"),
             "identification_confidence": None,
-            "identification_status": "unknown",
+            "identification_status": "linked_from_directory",
         }
     if confidence < 0.65:
         return {
@@ -93,7 +94,7 @@ def build_identity_result(
     return {
         "identified_employee_id": identified_employee.get("id"),
         "identification_confidence": confidence,
-        "identification_status": "verified",
+        "identification_status": "linked_from_directory",
     }
 
 

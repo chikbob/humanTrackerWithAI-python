@@ -217,14 +217,26 @@ def _normalize_remote_employees(payload) -> list[dict]:
     rows = payload if isinstance(payload, list) else payload.get("employees", [])
     normalized = []
     for row in rows:
+        last_name = row.get("last_name") or ""
+        first_name = row.get("first_name") or ""
+        middle_name = row.get("middle_name") or ""
+        full_name = row.get("full_name") or row.get("name") or ""
+        if not full_name and (last_name or first_name or middle_name):
+            full_name = " ".join(part for part in [last_name, first_name, middle_name] if part)
         normalized.append(
             {
-                "full_name": row.get("full_name") or row.get("name") or "",
+                "full_name": full_name,
+                "last_name": last_name,
+                "first_name": first_name,
+                "middle_name": middle_name,
+                "employee_number": row.get("employee_number") or row.get("personnel_number") or "",
                 "department": row.get("department") or "",
                 "position": row.get("position") or "",
                 "status": row.get("status") or "active",
                 "created_at": row.get("created_at"),
+                "hire_date": row.get("hire_date"),
                 "external_id": row.get("external_id") or row.get("id"),
+                "profile_photo_url": row.get("profile_photo_url") or row.get("avatar_url") or row.get("photo_url"),
                 "reference_image_url": row.get("reference_image_url") or row.get("photo_url"),
                 "reference_count": int(row.get("reference_count") or 0),
                 "last_synced_at": row.get("last_synced_at"),
@@ -250,8 +262,8 @@ def _fetch_supabase_directory(config: dict) -> list[dict]:
         raise RuntimeError("supabase_credentials_missing")
     query = urllib.parse.urlencode(
         {
-            "select": "id,full_name,department,position,status,created_at,reference_image_url,reference_count,last_synced_at",
-            "order": "full_name.asc",
+            "select": "id,full_name,last_name,first_name,middle_name,employee_number,department,position,status,created_at,hire_date,profile_photo_url,reference_image_url,reference_count,last_synced_at",
+            "order": "last_name.asc,first_name.asc",
         }
     )
     url = f"{supabase_url.rstrip('/')}/rest/v1/employees?{query}"

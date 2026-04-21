@@ -25,48 +25,48 @@ def render_system_settings(
             col1, col2, col3 = st.columns(3)
             with col1:
                 confidence_threshold = st.slider(
-                    "confidence threshold",
+                    "Порог confidence",
                     min_value=0.10,
                     max_value=0.95,
                     value=float(settings.get("confidence_threshold", 0.45)),
                     step=0.05,
                 )
                 frame_skip = st.slider(
-                    "frame skip",
+                    "Пропуск кадров",
                     min_value=0,
                     max_value=10,
                     value=int(settings.get("frame_skip", 1)),
                     step=1,
                 )
                 inference_size = st.selectbox(
-                    "inference size",
+                    "Размер кадра для инференса",
                     options=[320, 416, 512, 640, 960],
                     index=[320, 416, 512, 640, 960].index(int(settings.get("inference_size", 512))),
                 )
             with col2:
                 event_cooldown = st.slider(
-                    "event cooldown",
+                    "Интервал подавления дубликатов",
                     min_value=1,
                     max_value=60,
                     value=int(settings.get("event_cooldown", 5)),
                     step=1,
                 )
                 reconnect_interval = st.slider(
-                    "reconnect interval",
+                    "Интервал переподключения",
                     min_value=1,
                     max_value=60,
                     value=int(settings.get("reconnect_interval", 5)),
                     step=1,
                 )
                 source_timeout = st.slider(
-                    "source timeout",
+                    "Таймаут источника",
                     min_value=5,
                     max_value=120,
                     value=int(settings.get("source_timeout", 15)),
                     step=5,
                 )
                 employee_sync_interval = st.slider(
-                    "employee sync interval, sec",
+                    "Интервал синхронизации сотрудников, сек",
                     min_value=0,
                     max_value=3600,
                     value=int(settings.get("employee_sync_interval", 300)),
@@ -75,15 +75,15 @@ def render_system_settings(
                 )
             with col3:
                 model_name = st.selectbox(
-                    "active model",
+                    "Активная модель",
                     options=MODEL_OPTIONS,
                     index=MODEL_OPTIONS.index(settings.get("model_name", DEFAULT_MODEL_NAME))
                     if settings.get("model_name", DEFAULT_MODEL_NAME) in MODEL_OPTIONS
                     else 1,
                 )
-                debug_mode = st.toggle("debug mode", value=str(settings.get("debug_mode", "0")) == "1")
+                debug_mode = st.toggle("Режим отладки", value=str(settings.get("debug_mode", "0")) == "1")
                 active_access_point = st.selectbox(
-                    "active access point",
+                    "Активная точка доступа",
                     options=list(point_options.keys()) if point_options else ["не задана"],
                     index=list(point_options.keys()).index(default_point_name) if default_point_name in point_options else 0,
                 )

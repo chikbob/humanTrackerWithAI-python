@@ -54,7 +54,7 @@ def render_dashboard(
         with st.container(border=True):
             st.subheader("Оперативная обстановка по входной зоне")
             if active_status and active_status.get("last_snapshot_path") and Path(active_status["last_snapshot_path"]).exists():
-                st.image(active_status["last_snapshot_path"], use_container_width=True, caption=f"Источник: {active_source['name']}")
+                st.image(active_status["last_snapshot_path"], width="stretch", caption=f"Источник: {active_source['name']}")
             else:
                 st.info("Для активной камеры пока нет актуального snapshot. Проверьте worker или источник видеопотока.")
             if active_source:
@@ -69,7 +69,7 @@ def render_dashboard(
                 [event for event in events if datetime.fromtimestamp(event["timestamp"]).date() == datetime.now().date()]
             )
             if distribution.empty:
-                st.dataframe(pd.DataFrame(columns=["Час", "Событий"]), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(columns=["Час", "Событий"]), width="stretch", hide_index=True)
                 st.caption("За текущий день распределение событий еще не сформировано.")
             else:
                 chart_df = distribution.rename(columns={"hour": "Час", "count": "Событий"}).set_index("Час")
@@ -77,7 +77,7 @@ def render_dashboard(
 
         with st.container(border=True):
             st.subheader("Статус источников видео")
-            st.dataframe(pd.DataFrame(build_source_status_rows(video_sources, worker_statuses)), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(build_source_status_rows(video_sources, worker_statuses)), width="stretch", hide_index=True)
 
     with right_col:
         with st.container(border=True):
@@ -88,22 +88,23 @@ def render_dashboard(
                     "Событие": event.get("event_type"),
                     "Источник": event.get("source_name"),
                     "Точка доступа": event.get("access_point_name") or "не задана",
+                    "Сотрудник": event.get("employee_name") or "не установлен",
                     "Уверенность": round(event.get("confidence") or 0.0, 3),
                 }
                 for event in events[:10]
             ]
-            st.dataframe(pd.DataFrame(recent_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(recent_rows), width="stretch", hide_index=True)
         with st.container(border=True):
             st.subheader("Топ событий и сбои")
             top_events = build_top_event_types(events, limit=6)
-            st.dataframe(top_events.rename(columns={"event_type": "Тип события", "count": "Количество"}), use_container_width=True, hide_index=True)
+            st.dataframe(top_events.rename(columns={"event_type": "Тип события", "count": "Количество"}), width="stretch", hide_index=True)
             offline_df = build_offline_source_summary(events)
             if offline_df.empty:
                 st.caption("За текущий период offline-события по камерам не зафиксированы.")
             else:
                 st.dataframe(
                     offline_df.rename(columns={"source_name": "Источник", "offline_events": "Offline-событий"}),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
 

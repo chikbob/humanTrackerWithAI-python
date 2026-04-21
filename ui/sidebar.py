@@ -42,8 +42,6 @@ def render_app_sidebar(st, *, video_sources: list[dict], system_settings: dict):
     st.sidebar.markdown("### Контур управления")
     section = st.sidebar.radio("Раздел системы", options=SECTIONS, index=0)
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### Профиль запуска")
-    demo_mode = st.sidebar.toggle("Демо / fallback режим", value=False)
     model_name = st.sidebar.selectbox(
         "Нейросетевая модель",
         options=MODEL_OPTIONS,
@@ -56,11 +54,10 @@ def render_app_sidebar(st, *, video_sources: list[dict], system_settings: dict):
     st.sidebar.metric("Активных источников", len(active_sources))
     st.sidebar.metric("Режим production", "включен" if active_sources else "ожидает источник")
     st.sidebar.caption(
-        "Основной сценарий рассчитан на RTSP/IP/USB-источник и фоновый worker. "
-        "Браузерная камера и загрузка файлов остаются демонстрационными режимами."
+        "Production-источники обслуживаются worker-процессом. "
+        "Browser live работает как client-side WebRTC режим, а загрузка файлов остается демонстрационным сценарием."
     )
     return {
         "section": section,
-        "demo_mode": demo_mode,
         "model_name": model_name,
     }

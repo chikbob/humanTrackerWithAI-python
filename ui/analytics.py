@@ -83,7 +83,7 @@ def render_analytics(
                     for notification in notifications[-20:]
                 ]
             )
-            st.dataframe(notif_df.iloc[::-1], use_container_width=True, hide_index=True)
+            st.dataframe(notif_df.iloc[::-1], width="stretch", hide_index=True)
 
     tab_monitoring, tab_journal, tab_employees, tab_stats = st.tabs(
         [
@@ -152,7 +152,7 @@ def _render_monitoring_tab(st, sessions: list[dict]):
         )
 
     df_sessions = pd.DataFrame(sessions_summary)
-    st.dataframe(df_sessions, use_container_width=True, hide_index=True)
+    st.dataframe(df_sessions, width="stretch", hide_index=True)
 
     session_index = st.number_input(
         "Выберите сеанс мониторинга для детализации",
@@ -181,7 +181,7 @@ def _render_monitoring_tab(st, sessions: list[dict]):
             for frame in frames
         ]
     )
-    st.dataframe(df_frames, use_container_width=True, hide_index=True)
+    st.dataframe(df_frames, width="stretch", hide_index=True)
 
 
 def _render_events_tab(st, events: list[dict], access_logs: list[dict], show_advanced: bool):
@@ -294,7 +294,7 @@ def _render_events_tab(st, events: list[dict], access_logs: list[dict], show_adv
         empty_df = pd.DataFrame(
             columns=["Время", "Тип события", "Уровень", "Точка прохода", "Сотрудник", "Уверенность", "Примечание"]
         )
-        st.dataframe(empty_df, use_container_width=True, hide_index=True)
+        st.dataframe(empty_df, width="stretch", hide_index=True)
         st.caption("По выбранным фильтрам записи отсутствуют.")
     else:
         journal_view = filtered_journal.rename(
@@ -312,7 +312,7 @@ def _render_events_tab(st, events: list[dict], access_logs: list[dict], show_adv
             journal_view[
                 ["Время", "Тип события", "Уровень", "Точка прохода", "Сотрудник", "Уверенность", "Примечание"]
             ].sort_values("Время", ascending=False),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -332,7 +332,7 @@ def _render_events_tab(st, events: list[dict], access_logs: list[dict], show_adv
                 for row in access_logs
             ]
         )
-        st.dataframe(df_access_logs, use_container_width=True, hide_index=True)
+        st.dataframe(df_access_logs, width="stretch", hide_index=True)
     else:
         st.caption("Журнал проходов пока пуст. Доменные события будут появляться здесь автоматически.")
 
@@ -347,7 +347,7 @@ def _render_events_tab(st, events: list[dict], access_logs: list[dict], show_adv
             }
         )
         st.caption("Общий журнал событий входной зоны")
-        st.dataframe(simple_events.sort_values("Время", ascending=False), use_container_width=True, hide_index=True)
+        st.dataframe(simple_events.sort_values("Время", ascending=False), width="stretch", hide_index=True)
         return
 
     col_evt1, col_evt2, col_evt3 = st.columns(3)
@@ -378,7 +378,7 @@ def _render_events_tab(st, events: list[dict], access_logs: list[dict], show_adv
     if selected_source != "все":
         filtered_events = filtered_events[filtered_events["source_type"] == selected_source]
 
-    st.dataframe(filtered_events.sort_values("timestamp", ascending=False), use_container_width=True, hide_index=True)
+    st.dataframe(filtered_events.sort_values("timestamp", ascending=False), width="stretch", hide_index=True)
 
     timeline = filtered_events.copy()
     timeline["minute"] = timeline["timestamp"].dt.floor("min")
@@ -411,7 +411,7 @@ def _render_employees_tab(st, employees: list[dict], *, create_employee_fn, upda
         employee_rows,
         columns=["ID", "ФИО", "Подразделение", "Должность", "Статус", "Создан"],
     )
-    st.dataframe(df_employees, use_container_width=True, hide_index=True)
+    st.dataframe(df_employees, width="stretch", hide_index=True)
     if not employees:
         st.caption("Справочник сотрудников пока не заполнен. Добавьте первого сотрудника через форму ниже.")
 
@@ -575,7 +575,7 @@ def _render_access_stats_tab(st, events: list[dict], access_logs: list[dict]):
                 {"Показатель": "Длительные присутствия", "Значение": len(prolonged_events)},
             ]
         )
-        st.dataframe(domain_summary, use_container_width=True, hide_index=True)
+        st.dataframe(domain_summary, width="stretch", hide_index=True)
 
     df_stats["bucket"] = df_stats["timestamp"].dt.floor("H")
     time_distribution = df_stats.groupby("bucket").size().rename("events")
@@ -766,4 +766,4 @@ def _render_kpi_tab(st, model):
     met_a.metric("Overall Precision", f"{overall_precision:.3f}")
     met_b.metric("Overall Recall", f"{overall_recall:.3f}")
     met_c.metric("TP / FP / FN", f"{total_tp} / {total_fp} / {total_fn}")
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)

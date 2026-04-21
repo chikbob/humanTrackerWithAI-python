@@ -341,7 +341,7 @@ def register_entry_zone_domain_events(
             frame_height=detection.get("frame_height"),
             message="Личность человека не установлена; требуется последующее сопоставление с сотрудником",
             access_point_id=settings.get("default_access_point_id"),
-            identification_status="not_configured",
+            identification_status="unknown",
         )
 
     # Transition into the entry zone.

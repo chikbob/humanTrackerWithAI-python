@@ -8,8 +8,8 @@ import pandas as pd
 
 
 SOURCE_TYPES = {
-    "rtsp": "RTSP/IP camera",
-    "stream_url": "HLS / HTTP stream",
+    "rtsp": "RTSP/IP-камера",
+    "stream_url": "HLS / HTTP-поток",
     "usb_camera": "USB / локальная камера на сервере",
     "browser_camera": "Браузерная камера",
 }
@@ -37,7 +37,7 @@ def render_video_sources(
                     {
                         "ID": source["id"],
                         "Наименование": source["name"],
-                        "Тип": source["source_type"],
+                        "Тип": SOURCE_TYPES.get(source["source_type"], source["source_type"]),
                         "Локация": source.get("location") or "",
                         "Активен": "да" if source.get("is_active") else "нет",
                         "Статус": status.get("status", "idle"),
@@ -45,7 +45,7 @@ def render_video_sources(
                         "Последний кадр": _fmt_ts(status.get("last_frame_at")),
                     }
                 )
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
     with right_col:
         with st.container(border=True):
@@ -125,12 +125,12 @@ def render_video_sources(
                     st.rerun()
                 toggle_col1, toggle_col2 = st.columns(2)
                 with toggle_col1:
-                    if st.button("Activate", key=f"activate_source_{selected['id']}"):
+                    if st.button("Активировать", key=f"activate_source_{selected['id']}"):
                         set_video_source_active_fn(source_id=selected["id"], is_active=True)
                         st.success("Источник активирован.")
                         st.rerun()
                 with toggle_col2:
-                    if st.button("Deactivate", key=f"deactivate_source_{selected['id']}"):
+                    if st.button("Деактивировать", key=f"deactivate_source_{selected['id']}"):
                         set_video_source_active_fn(source_id=selected["id"], is_active=False)
                         st.warning("Источник деактивирован.")
                         st.rerun()

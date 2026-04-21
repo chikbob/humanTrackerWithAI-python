@@ -4,6 +4,7 @@ import random
 import sqlite3
 import time
 import uuid
+from typing import Optional
 
 from config.app_config import SYSTEM_SETTING_DEFAULTS
 
@@ -20,6 +21,47 @@ def get_db_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def build_employee_full_name(last_name: str, first_name: str, middle_name: str = "") -> str:
+    parts = [last_name.strip(), first_name.strip(), middle_name.strip()]
+    return " ".join(part for part in parts if part)
+
+
+def split_employee_full_name(full_name: str) -> tuple[str, str, str]:
+    parts = [part for part in (full_name or "").strip().split() if part]
+    if not parts:
+        return "", "", ""
+    if len(parts) == 1:
+        return parts[0], "", ""
+    if len(parts) == 2:
+        return parts[0], parts[1], ""
+    return parts[0], parts[1], " ".join(parts[2:])
+
+
+def build_employee_display_name(employee: dict | sqlite3.Row | None) -> str:
+    if not employee:
+        return ""
+    last_name = (employee.get("last_name") if isinstance(employee, dict) else employee["last_name"]) if "last_name" in employee.keys() else ""
+    first_name = (employee.get("first_name") if isinstance(employee, dict) else employee["first_name"]) if "first_name" in employee.keys() else ""
+    middle_name = (employee.get("middle_name") if isinstance(employee, dict) else employee["middle_name"]) if "middle_name" in employee.keys() else ""
+    if last_name or first_name or middle_name:
+        return build_employee_full_name(last_name or "", first_name or "", middle_name or "")
+    if isinstance(employee, dict):
+        return employee.get("full_name") or ""
+    return employee["full_name"] if "full_name" in employee.keys() else ""
+
+
+def normalize_identification_status(status: Optional[str]) -> str:
+    mapping = {
+        None: "unlinked",
+        "": "unlinked",
+        "not_configured": "unlinked",
+        "matched": "linked_from_directory",
+        "verified": "linked_from_directory",
+        "ambiguous_match": "pending_operator_confirmation",
+    }
+    return mapping.get(status, status)
 
 
 def _table_exists(conn, table_name: str) -> bool:
@@ -116,12 +158,18 @@ def init_db():
         CREATE TABLE IF NOT EXISTS employees (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             full_name TEXT NOT NULL,
+            last_name TEXT,
+            first_name TEXT,
+            middle_name TEXT,
+            employee_number TEXT,
             department TEXT,
             position TEXT,
             status TEXT,
             created_at REAL,
+            hire_date REAL,
             external_id TEXT,
             source_system TEXT,
+            profile_photo_url TEXT,
             reference_image_url TEXT,
             reference_count INTEGER DEFAULT 0,
             last_synced_at REAL
@@ -306,12 +354,18 @@ def init_db():
         "employees",
         [
             ("full_name", "full_name TEXT NOT NULL DEFAULT ''"),
+            ("last_name", "last_name TEXT"),
+            ("first_name", "first_name TEXT"),
+            ("middle_name", "middle_name TEXT"),
+            ("employee_number", "employee_number TEXT"),
             ("department", "department TEXT"),
             ("position", "position TEXT"),
             ("status", "status TEXT"),
             ("created_at", "created_at REAL"),
+            ("hire_date", "hire_date REAL"),
             ("external_id", "external_id TEXT"),
             ("source_system", "source_system TEXT"),
+            ("profile_photo_url", "profile_photo_url TEXT"),
             ("reference_image_url", "reference_image_url TEXT"),
             ("reference_count", "reference_count INTEGER DEFAULT 0"),
             ("last_synced_at", "last_synced_at REAL"),
@@ -528,7 +582,7 @@ def db_insert_event(event: dict):
             event.get("access_point_id"),
             event.get("identified_employee_id"),
             event.get("identification_confidence"),
-            event.get("identification_status", "not_configured"),
+            normalize_identification_status(event.get("identification_status")),
         ),
     )
     # Raw telemetry stays in detection_events, while domain events are linked via access_logs.
@@ -563,7 +617,7 @@ def db_insert_event(event: dict):
                 event.get("message"),
                 event.get("identified_employee_id"),
                 event.get("identification_confidence"),
-                event.get("identification_status", "not_configured"),
+                normalize_identification_status(event.get("identification_status")),
             ),
         )
     conn.commit()
@@ -657,7 +711,7 @@ def load_history_from_db():
                 "access_point_id": row["access_point_id"] if "access_point_id" in row.keys() else None,
                 "identified_employee_id": row["identified_employee_id"] if "identified_employee_id" in row.keys() else None,
                 "identification_confidence": row["identification_confidence"] if "identification_confidence" in row.keys() else None,
-                "identification_status": row["identification_status"] if "identification_status" in row.keys() else "not_configured",
+                "identification_status": normalize_identification_status(row["identification_status"]) if "identification_status" in row.keys() else "unlinked",
             }
         )
 
@@ -671,21 +725,32 @@ def load_employees():
         SELECT
             id,
             full_name,
+            last_name,
+            first_name,
+            middle_name,
+            employee_number,
             department,
             position,
             status,
             created_at,
+            hire_date,
             external_id,
             source_system,
+            profile_photo_url,
             reference_image_url,
             reference_count,
             last_synced_at
         FROM employees
-        ORDER BY full_name ASC
+        ORDER BY last_name ASC, first_name ASC, middle_name ASC, full_name ASC
         """
     ).fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    employees = []
+    for row in rows:
+        employee = dict(row)
+        employee["display_name"] = build_employee_display_name(employee)
+        employees.append(employee)
+    return employees
 
 
 def load_access_points():
@@ -701,20 +766,45 @@ def load_access_points():
     return [dict(row) for row in rows]
 
 
-def create_employee(*, full_name: str, department: str, position: str, status: str):
+def create_employee(
+    *,
+    full_name: str,
+    department: str,
+    position: str,
+    status: str,
+    last_name: str = "",
+    first_name: str = "",
+    middle_name: str = "",
+    employee_number: str = "",
+    hire_date: Optional[float] = None,
+    profile_photo_url: str = "",
+):
+    if not (last_name.strip() or first_name.strip() or middle_name.strip()):
+        last_name, first_name, middle_name = split_employee_full_name(full_name)
+    normalized_full_name = build_employee_full_name(last_name, first_name, middle_name) or full_name.strip()
     conn = get_db_conn()
     conn.execute(
         """
-        INSERT INTO employees (full_name, department, position, status, created_at, source_system, reference_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO employees (
+            full_name, last_name, first_name, middle_name, employee_number,
+            department, position, status, created_at, hire_date,
+            source_system, profile_photo_url, reference_count
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            full_name.strip(),
+            normalized_full_name,
+            last_name.strip(),
+            first_name.strip(),
+            middle_name.strip(),
+            employee_number.strip(),
             department.strip(),
             position.strip(),
             status.strip(),
             time.time(),
+            hire_date,
             "local",
+            profile_photo_url.strip(),
             0,
         ),
     )
@@ -722,19 +812,43 @@ def create_employee(*, full_name: str, department: str, position: str, status: s
     conn.close()
 
 
-def update_employee(*, employee_id: int, full_name: str, department: str, position: str, status: str):
+def update_employee(
+    *,
+    employee_id: int,
+    full_name: str,
+    department: str,
+    position: str,
+    status: str,
+    last_name: str = "",
+    first_name: str = "",
+    middle_name: str = "",
+    employee_number: str = "",
+    hire_date: Optional[float] = None,
+    profile_photo_url: str = "",
+):
+    if not (last_name.strip() or first_name.strip() or middle_name.strip()):
+        last_name, first_name, middle_name = split_employee_full_name(full_name)
+    normalized_full_name = build_employee_full_name(last_name, first_name, middle_name) or full_name.strip()
     conn = get_db_conn()
     conn.execute(
         """
         UPDATE employees
-        SET full_name = ?, department = ?, position = ?, status = ?
+        SET full_name = ?, last_name = ?, first_name = ?, middle_name = ?,
+            employee_number = ?, department = ?, position = ?, status = ?,
+            hire_date = ?, profile_photo_url = ?
         WHERE id = ?
         """,
         (
-            full_name.strip(),
+            normalized_full_name,
+            last_name.strip(),
+            first_name.strip(),
+            middle_name.strip(),
+            employee_number.strip(),
             department.strip(),
             position.strip(),
             status.strip(),
+            hire_date,
+            profile_photo_url.strip(),
             employee_id,
         ),
     )
@@ -771,15 +885,62 @@ def ensure_demo_employees():
         conn.close()
         return False
 
+    now_ts = time.time()
     demo_rows = [
-        ("Иванов Иван Иванович", "Служба эксплуатации", "Инженер", "active", time.time(), "local", 0),
-        ("Петров Петр Сергеевич", "Отдел безопасности", "Оператор", "active", time.time(), "local", 0),
-        ("Сидорова Анна Викторовна", "Администрация", "Менеджер", "inactive", time.time(), "local", 0),
+        (
+            "Иванов Иван Иванович",
+            "Иванов",
+            "Иван",
+            "Иванович",
+            "A-1001",
+            "Служба эксплуатации",
+            "Инженер по эксплуатации",
+            "active",
+            now_ts,
+            now_ts - 420 * 86400,
+            "local",
+            "",
+            0,
+        ),
+        (
+            "Петров Петр Сергеевич",
+            "Петров",
+            "Петр",
+            "Сергеевич",
+            "B-2045",
+            "Служба безопасности",
+            "Оператор центра мониторинга",
+            "active",
+            now_ts,
+            now_ts - 780 * 86400,
+            "local",
+            "",
+            0,
+        ),
+        (
+            "Сидорова Анна Викторовна",
+            "Сидорова",
+            "Анна",
+            "Викторовна",
+            "HR-0312",
+            "Отдел кадров",
+            "Специалист по персоналу",
+            "inactive",
+            now_ts,
+            now_ts - 1100 * 86400,
+            "local",
+            "",
+            0,
+        ),
     ]
     conn.executemany(
         """
-        INSERT INTO employees (full_name, department, position, status, created_at, source_system, reference_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO employees (
+            full_name, last_name, first_name, middle_name, employee_number,
+            department, position, status, created_at, hire_date,
+            source_system, profile_photo_url, reference_count
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         demo_rows,
     )
@@ -796,6 +957,7 @@ def load_access_logs():
             access_logs.id,
             access_logs.employee_id,
             employees.full_name AS employee_name,
+            employees.employee_number AS employee_number,
             access_logs.timestamp,
             access_logs.access_point_id,
             access_points.name AS access_point_name,
@@ -843,6 +1005,11 @@ def load_events(limit=None):
             sessions.source_path,
             sessions.model,
             employees.full_name AS employee_name,
+            employees.employee_number AS employee_number,
+            employees.department AS employee_department,
+            employees.position AS employee_position,
+            employees.status AS employee_status,
+            employees.profile_photo_url AS employee_photo_url,
             access_points.name AS access_point_name
         FROM events
         LEFT JOIN sessions ON sessions.id = events.session_id
@@ -857,7 +1024,77 @@ def load_events(limit=None):
         params = (limit,)
     rows = conn.execute(query, params).fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    normalized_rows = []
+    for row in rows:
+        event = dict(row)
+        event["identification_status"] = normalize_identification_status(event.get("identification_status"))
+        normalized_rows.append(event)
+    return normalized_rows
+
+
+def link_event_to_employee(
+    *,
+    event_id: str,
+    employee_id: int,
+    identification_status: str,
+    note: str = "",
+):
+    conn = get_db_conn()
+    event_row = conn.execute(
+        """
+        SELECT event_id, access_log_id, employee_id, identified_employee_id, message
+        FROM events
+        WHERE event_id = ?
+        """,
+        (event_id,),
+    ).fetchone()
+    if event_row is None:
+        conn.close()
+        raise ValueError(f"event_not_found:{event_id}")
+
+    employee_row = conn.execute(
+        """
+        SELECT id, full_name, employee_number, status
+        FROM employees
+        WHERE id = ?
+        """,
+        (employee_id,),
+    ).fetchone()
+    if employee_row is None:
+        conn.close()
+        raise ValueError(f"employee_not_found:{employee_id}")
+
+    employee_status = employee_row["status"] or ""
+    if employee_status != "active":
+        identification_status = "inactive_employee"
+
+    note_parts = [part for part in [event_row["message"], note.strip()] if part]
+    if employee_row["full_name"]:
+        note_parts.append(
+            f"Оператор связал событие с сотрудником {employee_row['full_name']}"
+            + (f" ({employee_row['employee_number']})" if employee_row["employee_number"] else "")
+        )
+    merged_note = ". ".join(dict.fromkeys(note_parts))
+
+    conn.execute(
+        """
+        UPDATE events
+        SET employee_id = ?, identified_employee_id = ?, identification_status = ?, message = ?
+        WHERE event_id = ?
+        """,
+        (employee_id, employee_id, identification_status, merged_note, event_id),
+    )
+    if event_row["access_log_id"] is not None:
+        conn.execute(
+            """
+            UPDATE access_logs
+            SET employee_id = ?, note = ?
+            WHERE id = ?
+            """,
+            (employee_id, merged_note, event_row["access_log_id"]),
+        )
+    conn.commit()
+    conn.close()
 
 
 def load_video_sources():
@@ -880,15 +1117,27 @@ def replace_employee_cache(employees: list[dict], *, source_system: str, synced_
     conn.execute("DELETE FROM sqlite_sequence WHERE name = 'employees'")
     rows = []
     for employee in employees:
+        last_name = (employee.get("last_name") or "").strip()
+        first_name = (employee.get("first_name") or "").strip()
+        middle_name = (employee.get("middle_name") or "").strip()
+        if not (last_name or first_name or middle_name):
+            last_name, first_name, middle_name = split_employee_full_name(employee.get("full_name", ""))
+        full_name = build_employee_full_name(last_name, first_name, middle_name) or employee.get("full_name", "").strip()
         rows.append(
             (
-                employee.get("full_name", "").strip(),
+                full_name,
+                last_name,
+                first_name,
+                middle_name,
+                (employee.get("employee_number") or "").strip(),
                 employee.get("department", "").strip(),
                 employee.get("position", "").strip(),
                 employee.get("status", "").strip() or "active",
                 employee.get("created_at") or synced_at,
+                employee.get("hire_date"),
                 employee.get("external_id"),
                 source_system,
+                employee.get("profile_photo_url"),
                 employee.get("reference_image_url"),
                 int(employee.get("reference_count") or 0),
                 synced_at,
@@ -897,9 +1146,11 @@ def replace_employee_cache(employees: list[dict], *, source_system: str, synced_
     conn.executemany(
         """
         INSERT INTO employees (
-            full_name, department, position, status, created_at,
-            external_id, source_system, reference_image_url, reference_count, last_synced_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            full_name, last_name, first_name, middle_name, employee_number,
+            department, position, status, created_at, hire_date,
+            external_id, source_system, profile_photo_url, reference_image_url,
+            reference_count, last_synced_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
     )
@@ -1185,39 +1436,53 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
         "Служба безопасности",
         "ИТ-служба",
         "Администрация",
-        "Производство",
-        "Логистика",
+        "Производственный департамент",
+        "Логистический центр",
         "Служба эксплуатации",
         "Отдел кадров",
+        "Финансовый блок",
     ]
     positions = [
-        "Инженер",
-        "Оператор",
+        "Инженер по эксплуатации",
+        "Оператор центра мониторинга",
         "Старший смены",
-        "Специалист",
-        "Менеджер",
+        "Специалист по безопасности",
+        "Менеджер административного блока",
         "Системный администратор",
         "Контролер доступа",
+        "Логист-координатор",
     ]
     employee_statuses = ["active", "active", "active", "inactive", "on_leave", "blocked"]
     employee_ids = []
     for index in range(employee_count):
-        full_name = (
-            f"{last_names[index % len(last_names)]} "
-            f"{first_names[(index * 3) % len(first_names)]} "
-            f"{patronymics[(index * 5) % len(patronymics)]}"
-        )
+        last_name = last_names[index % len(last_names)]
+        first_name = first_names[(index * 3) % len(first_names)]
+        middle_name = patronymics[(index * 5) % len(patronymics)]
+        full_name = build_employee_full_name(last_name, first_name, middle_name)
+        hire_date = now_ts - rng.randint(120, 2400) * 86400
         cursor = conn.execute(
             """
-            INSERT INTO employees (full_name, department, position, status, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO employees (
+                full_name, last_name, first_name, middle_name, employee_number,
+                department, position, status, created_at, hire_date,
+                source_system, profile_photo_url, reference_count
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 full_name,
+                last_name,
+                first_name,
+                middle_name,
+                f"EMP-{10000 + index}",
                 departments[index % len(departments)],
                 positions[index % len(positions)],
                 employee_statuses[index % len(employee_statuses)],
                 now_ts - rng.randint(10, 180) * 86400,
+                hire_date,
+                "local",
+                "",
+                0,
             ),
         )
         employee_ids.append(cursor.lastrowid)
@@ -1366,7 +1631,7 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
                     access_point_id,
                     employee_id if employee_id and rng.random() > 0.25 else None,
                     round(rng.uniform(0.66, 0.95), 3) if employee_id else None,
-                    "matched" if employee_id and rng.random() > 0.25 else "not_configured",
+                    "linked_from_directory" if employee_id and rng.random() > 0.25 else "unknown",
                 ),
             )
 
@@ -1395,7 +1660,7 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
                 "Синтетическая raw-телеметрия детекции",
                 employee_id if employee_id and rng.random() > 0.45 else None,
                 round(rng.uniform(0.55, 0.93), 3) if employee_id else None,
-                "matched" if employee_id and rng.random() > 0.45 else "not_configured",
+                "linked_from_directory" if employee_id and rng.random() > 0.45 else "unknown",
             )
             conn.execute(
                 """
@@ -1484,7 +1749,7 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
                 access_point_ids[offline_index % len(access_point_ids)],
                 None,
                 None,
-                "not_configured",
+                "unknown",
             ),
         )
 
