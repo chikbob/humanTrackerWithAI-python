@@ -368,7 +368,16 @@ def render_online_monitoring(
         worker_statuses=worker_statuses,
         source_cards=source_cards,
     )
-    _render_status_sidebars()
+    if hasattr(st, "fragment"):
+        refresh_interval = "2s" if selected_binding["kind"] in {"browser_camera", "local_camera"} else "5s"
+
+        @st.fragment(run_every=refresh_interval)
+        def _render_status_sidebars_fragment():
+            _render_status_sidebars()
+
+        _render_status_sidebars_fragment()
+    else:
+        _render_status_sidebars()
 
     with left_col:
         with st.container(border=True):
@@ -424,7 +433,8 @@ def render_online_monitoring(
             ]
             st.dataframe(pd.DataFrame(latest_rows), width="stretch", hide_index=True)
 
-    _render_status_sidebars()
+    if not hasattr(st, "fragment"):
+        _render_status_sidebars()
 
     if not standalone_mode:
         with st.expander("Демонстрационные сценарии и fallback", expanded=False):
@@ -739,6 +749,7 @@ def _render_source_tile(
                 db_insert_frame=db_insert_frame,
                 db_upsert_session=db_upsert_session,
                 standalone_mode=False,
+                status_panel_callback=status_panel_callback,
             )
             return
 
@@ -1408,6 +1419,7 @@ def _render_browser_camera_monitor(
     db_insert_frame,
     db_upsert_session,
     standalone_mode: bool = False,
+    status_panel_callback=None,
 ):
     """Render browser camera via all realistic methods available in the current environment."""
     methods = ["WebRTC live", "Browser snapshot", "Диагностика"]
@@ -1495,6 +1507,8 @@ def _render_browser_camera_monitor(
             draw_now=True,
         )
         _record_interactive_frame(session_state, "browser_camera")
+        if status_panel_callback is not None:
+            status_panel_callback()
         finish_session(session_state, db_upsert_session)
         return session_state.get("browser_camera_last_frame_at")
 
@@ -1544,6 +1558,8 @@ def _render_browser_camera_monitor(
             image = Image.open(shot).convert("RGB")
             st.image(image, caption="Получен кадр из браузерной камеры", width="stretch")
             _record_interactive_frame(session_state, "browser_camera")
+            if status_panel_callback is not None:
+                status_panel_callback()
         return session_state.get("browser_camera_last_frame_at")
 
     if not standalone_mode:
