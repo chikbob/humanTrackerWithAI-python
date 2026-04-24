@@ -15,6 +15,73 @@ SOURCE_TYPES = {
 }
 
 
+def _render_source_processing_controls(st, *, prefix: str, source: dict | None = None):
+    source = source or {}
+    st.caption("Параметры обработки применяются worker-процессом для конкретного источника.")
+    enable_roi = st.checkbox(
+        "Ограничивать события зоной ROI",
+        value=bool(source.get("enable_roi", True)),
+        key=f"{prefix}_enable_roi",
+    )
+    roi_col1, roi_col2 = st.columns(2)
+    with roi_col1:
+        roi_x = st.slider("ROI X, %", min_value=0, max_value=95, value=int(source.get("roi_x", 20)), key=f"{prefix}_roi_x")
+        roi_w_max = max(1, 100 - roi_x)
+        roi_w = st.slider("ROI W, %", min_value=1, max_value=roi_w_max, value=min(int(source.get("roi_w", 60)), roi_w_max), key=f"{prefix}_roi_w")
+    with roi_col2:
+        roi_y = st.slider("ROI Y, %", min_value=0, max_value=95, value=int(source.get("roi_y", 20)), key=f"{prefix}_roi_y")
+        roi_h_max = max(1, 100 - roi_y)
+        roi_h = st.slider("ROI H, %", min_value=1, max_value=roi_h_max, value=min(int(source.get("roi_h", 60)), roi_h_max), key=f"{prefix}_roi_h")
+
+    st.markdown("**Правила событий**")
+    rule_count_enabled = st.checkbox(
+        "Включить правило N/T для подсчета объектов",
+        value=bool(source.get("rule_count_enabled", False)),
+        key=f"{prefix}_rule_count_enabled",
+    )
+    rule_col1, rule_col2, rule_col3 = st.columns(3)
+    with rule_col1:
+        rule_n = st.number_input("N объектов", min_value=1, max_value=20, value=int(source.get("rule_n", 3)), step=1, key=f"{prefix}_rule_n")
+    with rule_col2:
+        rule_t = st.number_input("T секунд", min_value=1, max_value=300, value=int(source.get("rule_t", 10)), step=1, key=f"{prefix}_rule_t")
+    with rule_col3:
+        prolonged_presence_seconds = st.number_input(
+            "Длительное присутствие, сек",
+            min_value=1,
+            max_value=3600,
+            value=int(source.get("prolonged_presence_seconds", 10)),
+            step=1,
+            key=f"{prefix}_prolonged_presence_seconds",
+        )
+    rule_disappear_enabled = st.checkbox(
+        "Фиксировать исчезновение трека",
+        value=bool(source.get("rule_disappear_enabled", True)),
+        key=f"{prefix}_rule_disappear_enabled",
+    )
+    rule_disappear_seconds = st.number_input(
+        "Порог исчезновения, сек",
+        min_value=1,
+        max_value=120,
+        value=int(source.get("rule_disappear_seconds", 5)),
+        step=1,
+        key=f"{prefix}_rule_disappear_seconds",
+    )
+
+    return {
+        "enable_roi": enable_roi,
+        "roi_x": roi_x,
+        "roi_y": roi_y,
+        "roi_w": roi_w,
+        "roi_h": roi_h,
+        "rule_count_enabled": rule_count_enabled,
+        "rule_n": int(rule_n),
+        "rule_t": int(rule_t),
+        "rule_disappear_enabled": rule_disappear_enabled,
+        "rule_disappear_seconds": int(rule_disappear_seconds),
+        "prolonged_presence_seconds": int(prolonged_presence_seconds),
+    }
+
+
 def render_video_sources(
     st,
     *,
@@ -39,6 +106,7 @@ def render_video_sources(
                         "Наименование": source["name"],
                         "Тип": SOURCE_TYPES.get(source["source_type"], source["source_type"]),
                         "Локация": source.get("location") or "",
+                        "ROI": "вкл" if source.get("enable_roi") else "выкл",
                         "Активен": "да" if source.get("is_active") else "нет",
                         "Статус": status.get("status", "idle"),
                         "Последний heartbeat": _fmt_ts(status.get("last_heartbeat")),
@@ -59,6 +127,7 @@ def render_video_sources(
                 location = st.text_input("Локация")
                 description = st.text_area("Описание")
                 is_active = st.checkbox("Сделать активным сразу", value=True)
+                processing_config = _render_source_processing_controls(st, prefix="create_source")
                 submitted = st.form_submit_button("Сохранить источник")
             if submitted:
                 normalized_source_url = source_url.strip() or ("browser_camera" if source_type == "browser_camera" else "")
@@ -72,6 +141,7 @@ def render_video_sources(
                         location=location,
                         description=description,
                         is_active=is_active,
+                        **processing_config,
                     )
                     st.success("Источник видеоданных добавлен.")
                     st.rerun()
@@ -111,6 +181,7 @@ def render_video_sources(
                     source_url = st.text_input(source_url_label, value=selected["source_url"])
                     location = st.text_input("Локация", value=selected.get("location") or "")
                     description = st.text_area("Описание", value=selected.get("description") or "")
+                    processing_config = _render_source_processing_controls(st, prefix=f"edit_source_{selected['id']}", source=selected)
                     save = st.form_submit_button("Сохранить изменения")
                 if save:
                     update_video_source_fn(
@@ -120,6 +191,7 @@ def render_video_sources(
                         source_url=source_url,
                         location=location,
                         description=description,
+                        **processing_config,
                     )
                     st.success("Источник обновлен.")
                     st.rerun()

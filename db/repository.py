@@ -6,7 +6,7 @@ import time
 import uuid
 from typing import Optional
 
-from config.app_config import SYSTEM_SETTING_DEFAULTS
+from config.app_config import SOURCE_PROCESSING_DEFAULTS, SYSTEM_SETTING_DEFAULTS, normalize_source_processing_config
 
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -85,6 +85,44 @@ def _ensure_columns(conn, table_name: str, columns: list[tuple[str, str]]):
         if column_name in existing_columns:
             continue
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_sql}")
+
+
+def _video_source_columns_sql() -> list[tuple[str, str]]:
+    return [
+        ("enable_roi", f"enable_roi INTEGER DEFAULT {1 if SOURCE_PROCESSING_DEFAULTS['enable_roi'] else 0}"),
+        ("roi_x", f"roi_x REAL DEFAULT {SOURCE_PROCESSING_DEFAULTS['roi_x']}"),
+        ("roi_y", f"roi_y REAL DEFAULT {SOURCE_PROCESSING_DEFAULTS['roi_y']}"),
+        ("roi_w", f"roi_w REAL DEFAULT {SOURCE_PROCESSING_DEFAULTS['roi_w']}"),
+        ("roi_h", f"roi_h REAL DEFAULT {SOURCE_PROCESSING_DEFAULTS['roi_h']}"),
+        (
+            "rule_count_enabled",
+            f"rule_count_enabled INTEGER DEFAULT {1 if SOURCE_PROCESSING_DEFAULTS['rule_count_enabled'] else 0}",
+        ),
+        ("rule_n", f"rule_n INTEGER DEFAULT {SOURCE_PROCESSING_DEFAULTS['rule_n']}"),
+        ("rule_t", f"rule_t INTEGER DEFAULT {SOURCE_PROCESSING_DEFAULTS['rule_t']}"),
+        (
+            "rule_disappear_enabled",
+            f"rule_disappear_enabled INTEGER DEFAULT {1 if SOURCE_PROCESSING_DEFAULTS['rule_disappear_enabled'] else 0}",
+        ),
+        ("rule_disappear_seconds", f"rule_disappear_seconds INTEGER DEFAULT {SOURCE_PROCESSING_DEFAULTS['rule_disappear_seconds']}"),
+        ("prolonged_presence_seconds", f"prolonged_presence_seconds INTEGER DEFAULT {SOURCE_PROCESSING_DEFAULTS['prolonged_presence_seconds']}"),
+    ]
+
+
+def _video_source_select_columns() -> str:
+    return """
+        id, name, source_type, source_url, location, is_active, last_seen, description, created_at,
+        enable_roi, roi_x, roi_y, roi_w, roi_h,
+        rule_count_enabled, rule_n, rule_t, rule_disappear_enabled, rule_disappear_seconds,
+        prolonged_presence_seconds
+    """
+
+
+def _normalize_video_source_row(row: dict | sqlite3.Row) -> dict:
+    source = dict(row)
+    source.update(normalize_source_processing_config(source))
+    source["is_active"] = bool(source.get("is_active"))
+    return source
 
 
 def init_db():
@@ -242,7 +280,18 @@ def init_db():
             is_active INTEGER DEFAULT 0,
             last_seen REAL,
             description TEXT,
-            created_at REAL
+            created_at REAL,
+            enable_roi INTEGER DEFAULT 1,
+            roi_x REAL DEFAULT 20,
+            roi_y REAL DEFAULT 20,
+            roi_w REAL DEFAULT 60,
+            roi_h REAL DEFAULT 60,
+            rule_count_enabled INTEGER DEFAULT 0,
+            rule_n INTEGER DEFAULT 3,
+            rule_t INTEGER DEFAULT 10,
+            rule_disappear_enabled INTEGER DEFAULT 1,
+            rule_disappear_seconds INTEGER DEFAULT 5,
+            prolonged_presence_seconds INTEGER DEFAULT 10
         )
         """
     )
@@ -299,7 +348,8 @@ def init_db():
             ("last_seen", "last_seen REAL"),
             ("description", "description TEXT"),
             ("created_at", "created_at REAL"),
-        ],
+        ]
+        + _video_source_columns_sql(),
     )
     _ensure_columns(
         conn,
@@ -1100,14 +1150,14 @@ def link_event_to_employee(
 def load_video_sources():
     conn = get_db_conn()
     rows = conn.execute(
-        """
-        SELECT id, name, source_type, source_url, location, is_active, last_seen, description, created_at
+        f"""
+        SELECT {_video_source_select_columns()}
         FROM video_sources
         ORDER BY is_active DESC, name ASC
         """
     ).fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    return [_normalize_video_source_row(row) for row in rows]
 
 
 def replace_employee_cache(employees: list[dict], *, source_system: str, synced_at=None):
@@ -1202,39 +1252,153 @@ def upsert_employee_sync_state(
 def load_active_video_sources():
     conn = get_db_conn()
     rows = conn.execute(
-        """
-        SELECT id, name, source_type, source_url, location, is_active, last_seen, description, created_at
+        f"""
+        SELECT {_video_source_select_columns()}
         FROM video_sources
         WHERE is_active = 1
         ORDER BY id ASC
         """
     ).fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    return [_normalize_video_source_row(row) for row in rows]
 
 
-def create_video_source(*, name: str, source_type: str, source_url: str, location: str, description: str, is_active: bool):
+def create_video_source(
+    *,
+    name: str,
+    source_type: str,
+    source_url: str,
+    location: str,
+    description: str,
+    is_active: bool,
+    enable_roi: bool = True,
+    roi_x: float = 20,
+    roi_y: float = 20,
+    roi_w: float = 60,
+    roi_h: float = 60,
+    rule_count_enabled: bool = False,
+    rule_n: int = 3,
+    rule_t: int = 10,
+    rule_disappear_enabled: bool = True,
+    rule_disappear_seconds: int = 5,
+    prolonged_presence_seconds: int = 10,
+):
+    config = normalize_source_processing_config(
+        {
+            "enable_roi": enable_roi,
+            "roi_x": roi_x,
+            "roi_y": roi_y,
+            "roi_w": roi_w,
+            "roi_h": roi_h,
+            "rule_count_enabled": rule_count_enabled,
+            "rule_n": rule_n,
+            "rule_t": rule_t,
+            "rule_disappear_enabled": rule_disappear_enabled,
+            "rule_disappear_seconds": rule_disappear_seconds,
+            "prolonged_presence_seconds": prolonged_presence_seconds,
+        }
+    )
     conn = get_db_conn()
     conn.execute(
         """
-        INSERT INTO video_sources (name, source_type, source_url, location, is_active, last_seen, description, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO video_sources (
+            name, source_type, source_url, location, is_active, last_seen, description, created_at,
+            enable_roi, roi_x, roi_y, roi_w, roi_h,
+            rule_count_enabled, rule_n, rule_t, rule_disappear_enabled, rule_disappear_seconds,
+            prolonged_presence_seconds
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (name.strip(), source_type.strip(), source_url.strip(), location.strip(), 1 if is_active else 0, None, description.strip(), time.time()),
+        (
+            name.strip(),
+            source_type.strip(),
+            source_url.strip(),
+            location.strip(),
+            1 if is_active else 0,
+            None,
+            description.strip(),
+            time.time(),
+            1 if config["enable_roi"] else 0,
+            config["roi_x"],
+            config["roi_y"],
+            config["roi_w"],
+            config["roi_h"],
+            1 if config["rule_count_enabled"] else 0,
+            config["rule_n"],
+            config["rule_t"],
+            1 if config["rule_disappear_enabled"] else 0,
+            config["rule_disappear_seconds"],
+            config["prolonged_presence_seconds"],
+        ),
     )
     conn.commit()
     conn.close()
 
 
-def update_video_source(*, source_id: int, name: str, source_type: str, source_url: str, location: str, description: str):
+def update_video_source(
+    *,
+    source_id: int,
+    name: str,
+    source_type: str,
+    source_url: str,
+    location: str,
+    description: str,
+    enable_roi: bool = True,
+    roi_x: float = 20,
+    roi_y: float = 20,
+    roi_w: float = 60,
+    roi_h: float = 60,
+    rule_count_enabled: bool = False,
+    rule_n: int = 3,
+    rule_t: int = 10,
+    rule_disappear_enabled: bool = True,
+    rule_disappear_seconds: int = 5,
+    prolonged_presence_seconds: int = 10,
+):
+    config = normalize_source_processing_config(
+        {
+            "enable_roi": enable_roi,
+            "roi_x": roi_x,
+            "roi_y": roi_y,
+            "roi_w": roi_w,
+            "roi_h": roi_h,
+            "rule_count_enabled": rule_count_enabled,
+            "rule_n": rule_n,
+            "rule_t": rule_t,
+            "rule_disappear_enabled": rule_disappear_enabled,
+            "rule_disappear_seconds": rule_disappear_seconds,
+            "prolonged_presence_seconds": prolonged_presence_seconds,
+        }
+    )
     conn = get_db_conn()
     conn.execute(
         """
         UPDATE video_sources
-        SET name = ?, source_type = ?, source_url = ?, location = ?, description = ?
+        SET name = ?, source_type = ?, source_url = ?, location = ?, description = ?,
+            enable_roi = ?, roi_x = ?, roi_y = ?, roi_w = ?, roi_h = ?,
+            rule_count_enabled = ?, rule_n = ?, rule_t = ?, rule_disappear_enabled = ?,
+            rule_disappear_seconds = ?, prolonged_presence_seconds = ?
         WHERE id = ?
         """,
-        (name.strip(), source_type.strip(), source_url.strip(), location.strip(), description.strip(), source_id),
+        (
+            name.strip(),
+            source_type.strip(),
+            source_url.strip(),
+            location.strip(),
+            description.strip(),
+            1 if config["enable_roi"] else 0,
+            config["roi_x"],
+            config["roi_y"],
+            config["roi_w"],
+            config["roi_h"],
+            1 if config["rule_count_enabled"] else 0,
+            config["rule_n"],
+            config["rule_t"],
+            1 if config["rule_disappear_enabled"] else 0,
+            config["rule_disappear_seconds"],
+            config["prolonged_presence_seconds"],
+            source_id,
+        ),
     )
     conn.commit()
     conn.close()
@@ -1478,19 +1642,81 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
         employee_ids.append(cursor.lastrowid)
 
     video_sources = [
-        ("Камера центрального входа", "rtsp", "rtsp://demo-main", "Центральный вход", 1, now_ts - 25, "Основной производственный поток"),
-        ("Камера административного входа", "rtsp", "rtsp://demo-admin", "Корпус A", 1, now_ts - 70, "Вторичный поток доступа"),
-        ("USB пост охраны", "usb_camera", "0", "Пост охраны", 0, now_ts - 3600, "Локальная камера сервера"),
-        ("Браузер оператора", "browser_camera", "browser_camera", "АРМ оператора", 0, None, "Клиентский поток оператора"),
+        {
+            "name": "Камера центрального входа",
+            "source_type": "rtsp",
+            "source_url": "rtsp://demo-main",
+            "location": "Центральный вход",
+            "is_active": 1,
+            "last_seen": now_ts - 25,
+            "description": "Основной производственный поток",
+            "config": {"enable_roi": True, "roi_x": 18, "roi_y": 18, "roi_w": 56, "roi_h": 62},
+        },
+        {
+            "name": "Камера административного входа",
+            "source_type": "rtsp",
+            "source_url": "rtsp://demo-admin",
+            "location": "Корпус A",
+            "is_active": 1,
+            "last_seen": now_ts - 70,
+            "description": "Вторичный поток доступа",
+            "config": {"enable_roi": True, "roi_x": 24, "roi_y": 22, "roi_w": 48, "roi_h": 54},
+        },
+        {
+            "name": "USB пост охраны",
+            "source_type": "usb_camera",
+            "source_url": "0",
+            "location": "Пост охраны",
+            "is_active": 0,
+            "last_seen": now_ts - 3600,
+            "description": "Локальная камера сервера",
+            "config": {"enable_roi": False},
+        },
+        {
+            "name": "Браузер оператора",
+            "source_type": "browser_camera",
+            "source_url": "browser_camera",
+            "location": "АРМ оператора",
+            "is_active": 0,
+            "last_seen": None,
+            "description": "Клиентский поток оператора",
+            "config": {"enable_roi": False},
+        },
     ]
     source_ids = []
     for source_row in video_sources:
+        config = normalize_source_processing_config(source_row.get("config"))
         cursor = conn.execute(
             """
-            INSERT INTO video_sources (name, source_type, source_url, location, is_active, last_seen, description, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO video_sources (
+                name, source_type, source_url, location, is_active, last_seen, description, created_at,
+                enable_roi, roi_x, roi_y, roi_w, roi_h,
+                rule_count_enabled, rule_n, rule_t, rule_disappear_enabled, rule_disappear_seconds,
+                prolonged_presence_seconds
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (*source_row, now_ts - rng.randint(1, 15) * 86400),
+            (
+                source_row["name"],
+                source_row["source_type"],
+                source_row["source_url"],
+                source_row["location"],
+                source_row["is_active"],
+                source_row["last_seen"],
+                source_row["description"],
+                now_ts - rng.randint(1, 15) * 86400,
+                1 if config["enable_roi"] else 0,
+                config["roi_x"],
+                config["roi_y"],
+                config["roi_w"],
+                config["roi_h"],
+                1 if config["rule_count_enabled"] else 0,
+                config["rule_n"],
+                config["rule_t"],
+                1 if config["rule_disappear_enabled"] else 0,
+                config["rule_disappear_seconds"],
+                config["prolonged_presence_seconds"],
+            ),
         )
         source_ids.append(cursor.lastrowid)
 

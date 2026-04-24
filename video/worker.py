@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import os
 import time
 from types import SimpleNamespace
 
 import cv2
 
-from config.app_config import SYSTEM_SETTING_DEFAULTS
+from config.app_config import SYSTEM_SETTING_DEFAULTS, normalize_source_processing_config
 from db.repository import (
     db_insert_event,
     load_active_video_sources,
@@ -119,26 +118,27 @@ class SourceWorker:
             session = create_runtime_session(source, settings["model_name"])
             self.source_sessions[source_id] = session
 
+        source_config = normalize_source_processing_config(source)
         roi_config = {
-            "enable_roi": True,
-            "roi_x": 20,
-            "roi_y": 20,
-            "roi_w": 60,
-            "roi_h": 60,
+            "enable_roi": source_config["enable_roi"],
+            "roi_x": source_config["roi_x"],
+            "roi_y": source_config["roi_y"],
+            "roi_w": source_config["roi_w"],
+            "roi_h": source_config["roi_h"],
         }
         event_settings = {
-            "rule_count_enabled": False,
+            "rule_count_enabled": source_config["rule_count_enabled"],
             "rule_class": "person",
-            "rule_n": 3,
-            "rule_t": 10,
-            "rule_disappear_enabled": True,
-            "rule_disappear_seconds": 5,
+            "rule_n": source_config["rule_n"],
+            "rule_t": source_config["rule_t"],
+            "rule_disappear_enabled": source_config["rule_disappear_enabled"],
+            "rule_disappear_seconds": source_config["rule_disappear_seconds"],
             "enable_notifications": False,
             "notify_conf_threshold": settings["confidence_threshold"],
             "notify_classes": ["person"],
-            "enable_roi": True,
+            "enable_roi": source_config["enable_roi"],
             "default_access_point_id": settings["default_access_point_id"],
-            "prolonged_presence_seconds": 10,
+            "prolonged_presence_seconds": source_config["prolonged_presence_seconds"],
         }
 
         frame_rgb, detections, processing_time_ms = process_source_frame(
