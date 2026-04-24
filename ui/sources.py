@@ -13,6 +13,14 @@ SOURCE_TYPES = {
     "usb_camera": "USB / локальная камера на сервере",
     "browser_camera": "Браузерная камера",
 }
+PRODUCTION_SOURCE_TYPES = ("rtsp", "stream_url", "usb_camera")
+LAB_SOURCE_TYPES = ("browser_camera",)
+
+
+def split_video_sources(video_sources: list[dict]) -> tuple[list[dict], list[dict]]:
+    production_sources = [source for source in video_sources if source.get("source_type") in PRODUCTION_SOURCE_TYPES]
+    lab_sources = [source for source in video_sources if source.get("source_type") in LAB_SOURCE_TYPES]
+    return production_sources, lab_sources
 
 
 def _render_source_processing_defaults():
@@ -108,17 +116,23 @@ def render_video_sources(
     set_video_source_active_fn,
     test_connection_fn,
 ):
+    production_sources, lab_sources = split_video_sources(video_sources)
     statuses_by_source = {status["source_id"]: status for status in worker_statuses}
     source_labels = {f"{source['name']} [{source['id']}]": source for source in video_sources}
-    active_ids = [source["id"] for source in video_sources if source.get("is_active")]
+    active_production_ids = [source["id"] for source in production_sources if source.get("is_active")]
 
-    summary_col1, summary_col2, summary_col3 = st.columns(3)
-    summary_col1.metric("Всего источников", len(video_sources))
-    summary_col2.metric("Активных источников", len(active_ids))
+    summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
+    summary_col1.metric("Production-камер", len(production_sources))
+    summary_col2.metric("Активных production", len(active_production_ids))
     summary_col3.metric("Online / live", sum(1 for status in worker_statuses if status.get("is_connected")))
+    summary_col4.metric("Лабораторных источников", len(lab_sources))
 
     with st.container(border=True):
-        st.subheader("Список подключенных источников")
+        st.subheader("Реестр подключенных источников")
+        st.caption(
+            "Production-контур должен опираться на RTSP/HLS/USB-камеры. "
+            "Browser-источники и мобильные сценарии относятся к лабораторному контуру диагностики."
+        )
         rows = []
         for source in video_sources:
             status = statuses_by_source.get(source["id"], {})
@@ -137,16 +151,20 @@ def render_video_sources(
             )
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
-    tab_add, tab_manage, tab_check, tab_iphone = st.tabs(
-        ["Добавить источник", "Управление и активация", "Проверка подключения", "iPhone / мобильная камера"]
+    tab_add, tab_manage, tab_check, tab_lab = st.tabs(
+        ["Production-камеры", "Управление и активация", "Проверка подключения", "Лаборатория и мобильные камеры"]
     )
 
     with tab_add:
         with st.form("create_video_source_form", clear_on_submit=True):
             name = st.text_input("Наименование")
-            source_type = st.selectbox("Тип источника", options=list(SOURCE_TYPES.keys()), format_func=lambda key: SOURCE_TYPES[key])
-            source_url_label = "URL / индекс устройства" if source_type != "browser_camera" else "Идентификатор источника"
-            source_url_placeholder = "" if source_type != "browser_camera" else "browser_camera"
+            source_type = st.selectbox(
+                "Тип production-источника",
+                options=list(PRODUCTION_SOURCE_TYPES),
+                format_func=lambda key: SOURCE_TYPES[key],
+            )
+            source_url_label = "URL / индекс устройства"
+            source_url_placeholder = ""
             source_url = st.text_input(source_url_label, value=source_url_placeholder)
             location = st.text_input("Локация")
             description = st.text_area("Описание")
@@ -154,7 +172,7 @@ def render_video_sources(
             processing_config = _render_source_processing_controls(st, prefix="create_source")
             submitted = st.form_submit_button("Сохранить источник")
         if submitted:
-            normalized_source_url = source_url.strip() or ("browser_camera" if source_type == "browser_camera" else "")
+            normalized_source_url = source_url.strip()
             if not name.strip() or not normalized_source_url:
                 st.error("Необходимо указать название и значение источника.")
             else:
@@ -175,22 +193,28 @@ def render_video_sources(
             st.info("Нет источников для изменения.")
         else:
             selected_active_ids = st.multiselect(
-                "Активные источники",
-                options=[source["id"] for source in video_sources],
-                default=active_ids,
+                "Активные production-источники",
+                options=[source["id"] for source in production_sources],
+                default=active_production_ids,
                 format_func=lambda source_id: next(
                     f"{source['name']} [{SOURCE_TYPES.get(source['source_type'], source['source_type'])}]"
-                    for source in video_sources
+                    for source in production_sources
                     if source["id"] == source_id
                 ),
-                help="Здесь можно оставить активными сразу несколько камер. Сохранение применяет состояние ко всему списку.",
+                help="В production-мониторинг попадают только эти камеры. Лабораторные browser-источники активируются отдельно.",
             )
             if st.button("Сохранить набор активных источников", type="primary"):
                 selected_set = set(selected_active_ids)
-                for source in video_sources:
+                for source in production_sources:
                     set_video_source_active_fn(source_id=source["id"], is_active=source["id"] in selected_set)
-                st.success("Набор активных источников обновлен.")
+                st.success("Набор active production-камер обновлен.")
                 st.rerun()
+
+            if lab_sources:
+                st.caption(
+                    f"Лабораторные источники: {', '.join(source['name'] for source in lab_sources)}. "
+                    "Они не попадают в основную video wall и используются только для диагностики."
+                )
 
             selected_label = st.selectbox("Источник для редактирования", options=list(source_labels.keys()), key="source_edit_select")
             selected = source_labels[selected_label]
@@ -234,7 +258,27 @@ def render_video_sources(
                 else:
                     st.error(message)
 
-    with tab_iphone:
+    with tab_lab:
+        with st.container(border=True):
+            st.subheader("Лабораторный контур")
+            st.caption(
+                "Здесь настраиваются browser-live и мобильные камеры для демонстрации, быстрой диагностики и полевых проверок. "
+                "Основной операторский контур на них не опирается."
+            )
+            lab_rows = [
+                {
+                    "ID": source["id"],
+                    "Источник": source["name"],
+                    "Тип": SOURCE_TYPES.get(source["source_type"], source["source_type"]),
+                    "Активен": "да" if source.get("is_active") else "нет",
+                }
+                for source in lab_sources
+            ]
+            if lab_rows:
+                st.dataframe(pd.DataFrame(lab_rows), width="stretch", hide_index=True)
+            else:
+                st.info("Лабораторные источники ещё не добавлены.")
+
         st.info(
             "Для iPhone не используйте `localhost`. Открывайте UI по IP-адресу компьютера или сервера в той же сети, например `http://<ip-компьютера>:8501`, либо через внешний HTTPS/VPN."
         )
@@ -252,7 +296,31 @@ def render_video_sources(
             Если приложение запущено локально на Mac, iPhone можно использовать как системную камеру macOS и подключить как `USB / локальная камера на сервере`.
             """
         )
-        quick_col1, quick_col2 = st.columns(2, gap="large")
+        browser_col, iphone_cols = st.columns([0.9, 1.1], gap="large")
+        with browser_col:
+            with st.form("create_browser_lab_source", clear_on_submit=True):
+                st.caption("Добавить browser-live источник для диагностики")
+                browser_name = st.text_input("Наименование", value="Browser Live Camera")
+                browser_location = st.text_input("Локация", value="lab")
+                browser_active = st.checkbox("Включить источник", value=False)
+                browser_submit = st.form_submit_button("Добавить browser-live источник")
+            if browser_submit:
+                if not browser_name.strip():
+                    st.error("Укажите наименование browser-live источника.")
+                else:
+                    create_video_source_fn(
+                        name=browser_name.strip(),
+                        source_type="browser_camera",
+                        source_url="browser_camera",
+                        location=browser_location.strip(),
+                        description="Лабораторный browser-live источник",
+                        is_active=browser_active,
+                        **_render_source_processing_defaults(),
+                    )
+                    st.success("Browser-live источник добавлен в лабораторный контур.")
+                    st.rerun()
+        with iphone_cols:
+            quick_col1, quick_col2 = st.columns(2, gap="large")
         with quick_col1:
             st.caption("Быстрый preset для браузерной камеры iPhone")
             if st.button("Добавить источник «iPhone Safari Camera»"):

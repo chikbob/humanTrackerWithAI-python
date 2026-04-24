@@ -65,6 +65,8 @@ from ui.sidebar import ANIMAL_CLASSES, render_app_sidebar
 from ui.sources import render_video_sources
 from ui.zones import render_zones
 
+PRODUCTION_SOURCE_TYPES = {"rtsp", "stream_url", "usb_camera"}
+
 
 # WebRTC worker threads emit a harmless Streamlit context warning on every frame.
 # Lower this logger to keep the demo console readable without affecting behavior.
@@ -112,6 +114,7 @@ def main():
 
     system_settings = load_system_settings()
     video_sources = load_video_sources()
+    production_video_sources = [source for source in video_sources if source.get("source_type") in PRODUCTION_SOURCE_TYPES]
     if standalone_live_mode:
         sidebar_state = {
             "section": "Онлайн-мониторинг",
@@ -123,7 +126,7 @@ def main():
         )
         sidebar_state = render_app_sidebar(
             st,
-            video_sources=video_sources,
+            video_sources=production_video_sources,
             system_settings=system_settings,
             monitored_source_count=monitored_source_count,
         )
@@ -204,7 +207,7 @@ def main():
         _, class_meta = build_class_meta(model.names, ANIMAL_CLASSES)
         render_online_monitoring(
             st,
-            active_sources=[source for source in video_sources if source.get("is_active")],
+            active_sources=[source for source in production_video_sources if source.get("is_active")],
             worker_statuses=worker_statuses,
             events=events,
             model_name=sidebar_state["model_name"],
@@ -261,7 +264,7 @@ def main():
             update_zone_rule_fn=update_zone_rule,
             set_zone_rule_active_fn=set_zone_rule_active,
         )
-    elif section == "Источники видео":
+    elif section == "Подключение камер":
         render_video_sources(
             st,
             video_sources=video_sources,

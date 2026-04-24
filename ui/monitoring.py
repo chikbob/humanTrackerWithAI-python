@@ -1,4 +1,4 @@
-"""Online monitoring UI with production-first and demo fallback modes."""
+"""Online monitoring UI focused on the production operator wall."""
 
 from __future__ import annotations
 
@@ -458,7 +458,7 @@ def render_online_monitoring(
             "Источники онлайн-мониторинга",
             options=selectable_labels,
             key="monitoring_selected_labels",
-            help="Production-источники отображаются через snapshots worker. Browser/local режимы активируются как foreground live-source.",
+            help="В операторский мониторинг попадают только production-камеры, подключенные через серверный ingest/worker контур.",
         )
         if not selected_labels:
             selected_labels = default_selection
@@ -497,7 +497,7 @@ def render_online_monitoring(
             session_state.monitoring_embed_secondary_live = st.toggle(
                 "Встроить доп. live",
                 value=bool(session_state.get("monitoring_embed_secondary_live", False)),
-                help="Дополнительные browser/local источники будут открываться как встроенные standalone-view. Это тяжелее по ресурсам, но позволяет видеть несколько интерактивных камер сразу.",
+                help="Дополнительные production-камеры будут выводиться как отдельные карточки в общей стене мониторинга.",
             )
     selected_bindings = _prioritize_primary_binding(selected_bindings, primary_binding)
 
@@ -634,7 +634,7 @@ def render_online_monitoring(
                     unsafe_allow_html=True,
                 )
             st.markdown(
-                '<div class="video-wall-note">Production-источники читаются из worker runtime и формируют оперативный контур наблюдения. Browser/local live используется как вспомогательный foreground-режим диагностики.</div>',
+                '<div class="video-wall-note">Видеостена использует только production-камеры из серверного контура. Демонстрационные и browser-live сценарии вынесены в отдельный лабораторный раздел.</div>',
                 unsafe_allow_html=True,
             )
             _render_source_layout(
@@ -674,39 +674,20 @@ def render_online_monitoring(
     if not hasattr(st, "fragment"):
         _render_status_sidebars()
 
-    if not standalone_mode:
-        with st.expander("Демонстрационные сценарии и fallback", expanded=False):
-            st.caption(
-                "Этот блок содержит загрузку файлов и fallback-режимы для локальной демонстрации. "
-                "Production-путь должен использовать worker и server-side источники."
-            )
-            _render_demo_workspace(
-                st,
-                model_name=model_name,
-                model=model,
-                class_meta=class_meta,
-                inference_size=inference_size,
-                conf_threshold=conf_threshold,
-                frame_skip=frame_skip,
-                tracker_type=tracker_type,
-                session_state=session_state,
-                db_insert_event=db_insert_event,
-                db_insert_frame=db_insert_frame,
-                db_upsert_session=db_upsert_session,
-            )
+    if not standalone_mode and not active_sources:
+        st.info(
+            "В production-контуре пока нет активных камер. Добавьте RTSP/HLS/USB-источник в разделе "
+            "«Подключение камер», после чего активируйте его для операторского мониторинга."
+        )
 
 
 def _build_source_bindings(active_sources: list[dict], statuses_by_id: dict) -> list[dict]:
     bindings = []
-    has_browser_source = False
     for source in active_sources:
-        binding_kind = "browser_camera" if source["source_type"] == "browser_camera" else "production"
-        if binding_kind == "browser_camera":
-            has_browser_source = True
         bindings.append(
             {
                 "source_id": source["id"],
-                "kind": binding_kind,
+                "kind": "production",
                 "kind_label": source["source_type"],
                 "source": source,
                 "status": statuses_by_id.get(source["id"], {}),
@@ -714,29 +695,6 @@ def _build_source_bindings(active_sources: list[dict], statuses_by_id: dict) -> 
                 "label": f"{source['name']} [{source['source_type']}]",
             }
         )
-    if not has_browser_source:
-        bindings.append(
-            {
-                "source_id": "browser-live",
-                "kind": "browser_camera",
-                "kind_label": "browser_camera",
-                "source": None,
-                "status": {},
-                "name": "Браузерная камера",
-                "label": "Браузерная камера",
-            }
-        )
-    bindings.append(
-        {
-            "source_id": "local-macbook",
-            "kind": "local_camera",
-            "kind_label": "local_camera",
-            "source": None,
-            "status": {},
-            "name": "Локальная камера MacBook",
-            "label": "Локальная камера MacBook",
-        }
-    )
     return bindings
 
 

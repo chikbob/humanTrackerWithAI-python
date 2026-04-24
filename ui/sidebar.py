@@ -11,7 +11,7 @@ SECTIONS = [
     "Журнал инцидентов",
     "Аналитика и отчеты",
     "Камеры и зоны",
-    "Источники видео",
+    "Подключение камер",
     "Справочник персонала",
     "Настройки системы",
 ]
@@ -56,8 +56,8 @@ def render_app_sidebar(st, *, video_sources: list[dict], system_settings: dict, 
     st.sidebar.metric("Активных источников", effective_source_count)
     st.sidebar.metric("Режим production", "включен" if effective_source_count else "ожидает источник")
     st.sidebar.caption(
-        "Production-источники обслуживаются worker-процессом и формируют поток инцидентов и статусов камер. "
-        "Browser live используется как вспомогательный сценарий диагностики и оперативной проверки."
+        "Основной контур строится вокруг серверных RTSP/HLS/USB-камер, которые обслуживаются worker-процессом. "
+        "Мобильные и browser-live сценарии вынесены в лабораторный контур диагностики."
     )
     return {
         "section": section,
