@@ -1,3 +1,5 @@
+fastapi==0.115.0
+uvicorn==0.30.6
 streamlit==1.54.0
 streamlit-webrtc==0.62.4
 ultralytics==8.3.161

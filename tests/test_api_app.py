@@ -1,0 +1,101 @@
+import os
+import tempfile
+import time
+import unittest
+import importlib.util
+
+from db import repository
+
+
+FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
+
+if FASTAPI_AVAILABLE:
+    from fastapi.testclient import TestClient
+
+    from api.app import create_app
+
+
+@unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not installed")
+class ApiAppTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_db_path = repository.DB_PATH
+        repository.DB_PATH = os.path.join(self.temp_dir.name, "test_monitoring.db")
+        repository.init_db()
+        repository.create_video_source(
+            name="Gate A",
+            source_type="rtsp",
+            source_url="rtsp://gate-a",
+            location="Building A",
+            description="Primary source",
+            is_active=True,
+            enable_roi=True,
+            roi_x=10,
+            roi_y=15,
+            roi_w=40,
+            roi_h=50,
+        )
+        repository.create_employee(
+            full_name="Иванов Иван Иванович",
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name="Иванович",
+            employee_number="EMP-1",
+            department="Security",
+            position="Operator",
+            status="active",
+            hire_date=time.time(),
+        )
+        repository.db_insert_event(
+            {
+                "event_id": "evt-api-1",
+                "session_id": "worker-1-demo",
+                "event_scope": "domain",
+                "event_type": "person_detected_near_entry",
+                "source_type": "rtsp",
+                "frame_index": 1,
+                "timestamp": time.time(),
+                "class_name": "person",
+                "confidence": 0.91,
+                "track_id": "11",
+                "roi_inside": True,
+                "message": "API seed event",
+                "identification_status": "unlinked",
+            }
+        )
+        self.client = TestClient(create_app())
+
+    def tearDown(self):
+        repository.DB_PATH = self.original_db_path
+        self.temp_dir.cleanup()
+
+    def test_health_endpoint(self):
+        response = self.client.get("/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+
+    def test_video_sources_endpoint_returns_processing_config(self):
+        response = self.client.get("/api/v1/video-sources")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["items"]
+        self.assertEqual(len(payload), 1)
+        self.assertTrue(payload[0]["enable_roi"])
+        self.assertEqual(payload[0]["roi_x"], 10.0)
+
+    def test_dashboard_summary_contains_recent_events(self):
+        response = self.client.get("/api/v1/dashboard/summary", params={"event_limit": 10})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("summary", payload)
+        self.assertEqual(len(payload["recent_events"]), 1)
+        self.assertEqual(payload["recent_events"][0]["event_id"], "evt-api-1")
+
+    def test_video_source_activation_endpoint(self):
+        source_id = repository.load_video_sources()[0]["id"]
+        response = self.client.put(f"/api/v1/video-sources/{source_id}/active", params={"is_active": "false"})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(repository.load_video_sources()[0]["is_active"])
+
+
+if __name__ == "__main__":
+    unittest.main()
