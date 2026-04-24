@@ -334,6 +334,42 @@ def init_db():
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS experiment_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_key TEXT UNIQUE,
+            scenario_name TEXT NOT NULL,
+            source_path TEXT,
+            notes TEXT,
+            created_at REAL,
+            completed_at REAL,
+            status TEXT
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS benchmark_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL,
+            model_name TEXT NOT NULL,
+            tracker_type TEXT NOT NULL,
+            frame_limit INTEGER,
+            warmup_frames INTEGER,
+            frames_processed INTEGER,
+            avg_latency_ms REAL,
+            p95_latency_ms REAL,
+            avg_fps REAL,
+            avg_detections_per_frame REAL,
+            tracked_frame_ratio REAL,
+            detection_count_total INTEGER,
+            metadata_json TEXT,
+            created_at REAL,
+            FOREIGN KEY (run_id) REFERENCES experiment_runs(id)
+        )
+        """
+    )
 
     # Migration-safe column checks for databases created by older app versions.
     _ensure_columns(
@@ -384,6 +420,39 @@ def init_db():
             ("last_error", "last_error TEXT"),
             ("last_snapshot_path", "last_snapshot_path TEXT"),
             ("updated_at", "updated_at REAL"),
+        ],
+    )
+    _ensure_columns(
+        conn,
+        "experiment_runs",
+        [
+            ("run_key", "run_key TEXT"),
+            ("scenario_name", "scenario_name TEXT NOT NULL DEFAULT ''"),
+            ("source_path", "source_path TEXT"),
+            ("notes", "notes TEXT"),
+            ("created_at", "created_at REAL"),
+            ("completed_at", "completed_at REAL"),
+            ("status", "status TEXT"),
+        ],
+    )
+    _ensure_columns(
+        conn,
+        "benchmark_results",
+        [
+            ("run_id", "run_id INTEGER"),
+            ("model_name", "model_name TEXT NOT NULL DEFAULT ''"),
+            ("tracker_type", "tracker_type TEXT NOT NULL DEFAULT ''"),
+            ("frame_limit", "frame_limit INTEGER"),
+            ("warmup_frames", "warmup_frames INTEGER"),
+            ("frames_processed", "frames_processed INTEGER"),
+            ("avg_latency_ms", "avg_latency_ms REAL"),
+            ("p95_latency_ms", "p95_latency_ms REAL"),
+            ("avg_fps", "avg_fps REAL"),
+            ("avg_detections_per_frame", "avg_detections_per_frame REAL"),
+            ("tracked_frame_ratio", "tracked_frame_ratio REAL"),
+            ("detection_count_total", "detection_count_total INTEGER"),
+            ("metadata_json", "metadata_json TEXT"),
+            ("created_at", "created_at REAL"),
         ],
     )
     _ensure_columns(
@@ -1497,6 +1566,142 @@ def upsert_worker_status(
     )
     conn.commit()
     conn.close()
+
+
+def create_experiment_run(*, run_key: str, scenario_name: str, source_path: str, notes: str = "", status: str = "running"):
+    conn = get_db_conn()
+    cursor = conn.execute(
+        """
+        INSERT INTO experiment_runs (run_key, scenario_name, source_path, notes, created_at, completed_at, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (run_key, scenario_name, source_path, notes, time.time(), None, status),
+    )
+    conn.commit()
+    run_id = cursor.lastrowid
+    conn.close()
+    return run_id
+
+
+def complete_experiment_run(*, run_id: int, status: str = "completed"):
+    conn = get_db_conn()
+    conn.execute(
+        """
+        UPDATE experiment_runs
+        SET completed_at = ?, status = ?
+        WHERE id = ?
+        """,
+        (time.time(), status, run_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def insert_benchmark_result(
+    *,
+    run_id: int,
+    model_name: str,
+    tracker_type: str,
+    frame_limit: int,
+    warmup_frames: int,
+    frames_processed: int,
+    avg_latency_ms: float,
+    p95_latency_ms: float,
+    avg_fps: float,
+    avg_detections_per_frame: float,
+    tracked_frame_ratio: float,
+    detection_count_total: int,
+    metadata: dict | None = None,
+):
+    conn = get_db_conn()
+    cursor = conn.execute(
+        """
+        INSERT INTO benchmark_results (
+            run_id, model_name, tracker_type, frame_limit, warmup_frames, frames_processed,
+            avg_latency_ms, p95_latency_ms, avg_fps, avg_detections_per_frame,
+            tracked_frame_ratio, detection_count_total, metadata_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            run_id,
+            model_name,
+            tracker_type,
+            frame_limit,
+            warmup_frames,
+            frames_processed,
+            avg_latency_ms,
+            p95_latency_ms,
+            avg_fps,
+            avg_detections_per_frame,
+            tracked_frame_ratio,
+            detection_count_total,
+            json.dumps(metadata or {}, ensure_ascii=False),
+            time.time(),
+        ),
+    )
+    conn.commit()
+    row_id = cursor.lastrowid
+    conn.close()
+    return row_id
+
+
+def load_experiment_runs(limit: int | None = None):
+    conn = get_db_conn()
+    query = """
+        SELECT id, run_key, scenario_name, source_path, notes, created_at, completed_at, status
+        FROM experiment_runs
+        ORDER BY created_at DESC
+    """
+    params = ()
+    if limit is not None:
+        query += " LIMIT ?"
+        params = (limit,)
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def load_benchmark_results(*, run_id: int | None = None):
+    conn = get_db_conn()
+    query = """
+        SELECT
+            benchmark_results.id,
+            benchmark_results.run_id,
+            experiment_runs.run_key,
+            experiment_runs.scenario_name,
+            experiment_runs.source_path,
+            benchmark_results.model_name,
+            benchmark_results.tracker_type,
+            benchmark_results.frame_limit,
+            benchmark_results.warmup_frames,
+            benchmark_results.frames_processed,
+            benchmark_results.avg_latency_ms,
+            benchmark_results.p95_latency_ms,
+            benchmark_results.avg_fps,
+            benchmark_results.avg_detections_per_frame,
+            benchmark_results.tracked_frame_ratio,
+            benchmark_results.detection_count_total,
+            benchmark_results.metadata_json,
+            benchmark_results.created_at
+        FROM benchmark_results
+        JOIN experiment_runs ON experiment_runs.id = benchmark_results.run_id
+    """
+    params = ()
+    if run_id is not None:
+        query += " WHERE benchmark_results.run_id = ?"
+        params = (run_id,)
+    query += " ORDER BY benchmark_results.created_at DESC, benchmark_results.id DESC"
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    results = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["metadata"] = json.loads(item.get("metadata_json") or "{}")
+        except json.JSONDecodeError:
+            item["metadata"] = {}
+        results.append(item)
+    return results
 
 
 def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 900, seed: int = 42):

@@ -32,3 +32,34 @@ class SystemSetting:
     key: str
     value: str
     updated_at: Optional[float]
+
+
+@dataclass
+class ExperimentRun:
+    id: Optional[int]
+    run_key: str
+    scenario_name: str
+    source_path: str
+    notes: str
+    created_at: float
+    completed_at: Optional[float]
+    status: str
+
+
+@dataclass
+class BenchmarkResult:
+    id: Optional[int]
+    run_id: int
+    model_name: str
+    tracker_type: str
+    frame_limit: int
+    warmup_frames: int
+    frames_processed: int
+    avg_latency_ms: float
+    p95_latency_ms: float
+    avg_fps: float
+    avg_detections_per_frame: float
+    tracked_frame_ratio: float
+    detection_count_total: int
+    metadata_json: str
+    created_at: float
