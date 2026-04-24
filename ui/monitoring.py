@@ -24,6 +24,7 @@ from services.state import finish_session, get_current_session, log_frame, start
 from ui.sidebar import ANIMAL_CLASSES
 from utils.performance import DEFAULT_SESSION_PERSIST_INTERVAL, DEFAULT_UI_REFRESH_INTERVAL_SEC
 from utils.vision import draw_fancy_box, rotate_frame
+from video.ingest import SourceIngestSession
 
 try:
     import av
@@ -321,7 +322,7 @@ def render_online_monitoring(
             }
             .ops-grid {
                 display: grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
                 gap: .6rem;
                 margin-top: .7rem;
             }
@@ -343,6 +344,7 @@ def render_online_monitoring(
                 font-weight: 650;
                 color: #edf6ff;
                 line-height: 1.25;
+                word-break: break-word;
             }
             .ops-alert {
                 margin-top: .7rem;
@@ -362,7 +364,7 @@ def render_online_monitoring(
             }
             .source-status-meta {
                 display: grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
                 gap: .45rem .8rem;
                 margin-top: .55rem;
                 font-size: .77rem;
@@ -391,6 +393,7 @@ def render_online_monitoring(
                 font-size: 1rem;
                 font-weight: 700;
                 color: #eef6ff;
+                word-break: break-word;
             }
             .source-tile-subtitle {
                 margin-top: .12rem;
@@ -398,6 +401,7 @@ def render_online_monitoring(
                 text-transform: uppercase;
                 letter-spacing: .08em;
                 color: #8ea4ba;
+                word-break: break-word;
             }
             .source-meta-row {
                 display: flex;
@@ -448,22 +452,22 @@ def render_online_monitoring(
             valid_stored = [label for label in stored_selection if label in selectable_labels]
             if valid_stored:
                 default_selection = valid_stored
+        session_state.monitoring_selected_labels = default_selection
         selected_labels = st.multiselect(
             "Источники онлайн-мониторинга",
             options=selectable_labels,
-            default=default_selection,
             key="monitoring_selected_labels",
             help="Production-источники отображаются через snapshots worker. Browser/local режимы активируются как foreground live-source.",
         )
         if not selected_labels:
             selected_labels = default_selection
         selected_bindings = [binding for binding in source_bindings if binding["label"] in selected_labels]
-        session_state.monitoring_selected_labels = selected_labels
 
     layout_mode = "single"
     primary_binding = selected_bindings[0]
     if not standalone_mode:
-        control_col1, control_col2, control_col3, control_col4 = st.columns([1.45, 1.0, 0.9, 1.15])
+        control_col1, control_col2 = st.columns(2, gap="medium")
+        control_col3, control_col4 = st.columns(2, gap="medium")
         with control_col1:
             layout_mode = st.selectbox(
                 "Режим отображения",
@@ -515,6 +519,7 @@ def render_online_monitoring(
             class_meta=class_meta,
             inference_size=inference_size,
             conf_threshold=conf_threshold,
+            tracker_type=tracker_type,
             access_point_name=access_point_name,
             session_state=session_state,
             db_insert_event=db_insert_event,
@@ -532,7 +537,7 @@ def render_online_monitoring(
             f"Главный источник всегда имеет приоритет."
         )
 
-    left_col, right_col = st.columns([2.9, 0.72], gap="medium")
+    left_col, right_col = st.columns([2.25, 1.0], gap="medium")
     with right_col:
         state_panel_placeholder = st.empty()
         statuses_panel_placeholder = st.empty()
@@ -1059,6 +1064,55 @@ def _render_embedded_live_source(st, binding: dict):
     )
 
 
+def _render_production_live_monitor(st, *, source: dict, source_status: dict, standalone_mode: bool = False):
+    frame_placeholder = st.empty()
+    status_placeholder = None if standalone_mode else st.empty()
+    ingest = SourceIngestSession(source=source, idle_sleep_seconds=0.0)
+    if not ingest.start():
+        snapshot_path = source_status.get("last_snapshot_path")
+        if snapshot_path and Path(snapshot_path).exists():
+            st.image(snapshot_path, width="stretch")
+            st.warning("Прямой live-поток не открылся. Показан последний snapshot от worker.")
+        else:
+            st.error(ingest.last_error or "Не удалось открыть production-источник в foreground-режиме.")
+        return source_status.get("last_frame_at")
+
+    last_sequence = None
+    last_draw_ts = 0.0
+    last_status_ts = 0.0
+    try:
+        while True:
+            frame_packet = ingest.get_latest_frame(last_sequence=last_sequence)
+            if frame_packet is None:
+                if ingest.last_error:
+                    break
+                time.sleep(0.02)
+                continue
+            frame_bgr, frame_ts, frame_sequence = frame_packet
+            last_sequence = frame_sequence
+            now_ts = time.time()
+            if now_ts - last_draw_ts < 0.04:
+                continue
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            frame_placeholder.image(frame_rgb, channels="RGB", width="stretch")
+            last_draw_ts = now_ts
+            if status_placeholder is not None and now_ts - last_status_ts >= 1.0:
+                status_placeholder.caption(
+                    f"Прямой live foreground-поток активен • последний кадр: {_fmt_ts(frame_ts)}"
+                )
+                last_status_ts = now_ts
+    finally:
+        ingest.close()
+
+    snapshot_path = source_status.get("last_snapshot_path")
+    if snapshot_path and Path(snapshot_path).exists():
+        frame_placeholder.image(snapshot_path, width="stretch")
+        st.warning("Live-поток оборвался. Показан последний snapshot от worker.")
+    else:
+        st.warning(ingest.last_error or "Live-поток временно недоступен.")
+    return source_status.get("last_frame_at")
+
+
 def _render_source_status_badge(*, title: str, source_type: str, status: str, fps, last_frame_at: str, recent_event_count: int, error_text: str, live_window_url: str) -> str:
     status_color = _status_chip_color(status)
     error_html = f"<div style='margin-top:6px;color:#fca5a5'>{error_text}</div>" if error_text else ""
@@ -1180,20 +1234,12 @@ def _render_standalone_live_window(
             unsafe_allow_html=True,
         )
     if selected_binding["kind"] == "production" and selected_source is not None:
-        snapshot_path = selected_status.get("last_snapshot_path")
-        if snapshot_path and Path(snapshot_path).exists():
-            encoded_image = base64.b64encode(Path(snapshot_path).read_bytes()).decode("ascii")
-            st.markdown(
-                f"""
-                <img
-                    src="data:image/jpeg;base64,{encoded_image}"
-                    style="position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;background:#000;z-index:1;"
-                />
-                """,
-                unsafe_allow_html=True,
-            )
-        else:
-            st.warning("Для production-источника пока нет актуального snapshot от worker.")
+        _render_production_live_monitor(
+            st,
+            source=selected_source,
+            source_status=selected_status,
+            standalone_mode=True,
+        )
     elif selected_binding["kind"] == "local_camera":
         _render_local_camera_monitor(
             st,
