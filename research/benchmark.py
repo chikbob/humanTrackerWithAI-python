@@ -7,7 +7,7 @@ import time
 import uuid
 from pathlib import Path
 
-from config.app_config import build_tracker_runtime_config
+from config.app_config import build_ai_runtime_settings, build_tracker_runtime_config
 from core.tracking import run_detection_with_optional_tracking
 from db.repository import complete_experiment_run, create_experiment_run, insert_benchmark_result
 from research.scenarios import build_named_scenario
@@ -44,12 +44,13 @@ def _load_benchmark_model(model_name: str):
     return YOLO(model_name)
 
 
-def _summarize_case(*, model_name: str, tracker_type: str, frame_limit: int, warmup_frames: int, frames, model):
+def _summarize_case(*, model_name: str, tracker_type: str, frame_limit: int, warmup_frames: int, frames, model, quality_profile: str = "balanced"):
     latencies_ms = []
     detection_counts = []
     tracked_frames = 0
     total_processed = 0
     tracker_runtime = build_tracker_runtime_config(tracker_type)
+    ai_runtime = build_ai_runtime_settings({"ai_quality_profile": quality_profile}, {"tracker_type_override": tracker_type})
 
     for index, frame in enumerate(frames):
         started_at = time.perf_counter()
@@ -57,8 +58,9 @@ def _summarize_case(*, model_name: str, tracker_type: str, frame_limit: int, war
             model,
             frame,
             tracker_type=tracker_type,
-            inference_size=640,
-            conf_threshold=0.25,
+            inference_size=ai_runtime["inference_size"],
+            conf_threshold=ai_runtime["confidence_threshold"],
+            iou_threshold=ai_runtime["tracking_iou_threshold"],
         )
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
         boxes_count = 0
@@ -102,6 +104,11 @@ def _summarize_case(*, model_name: str, tracker_type: str, frame_limit: int, war
         "metadata": {
             "tracker_label": tracker_runtime["tracker_label"],
             "frames_sampled": len(frames),
+            "quality_profile": quality_profile,
+            "confidence_threshold": ai_runtime["confidence_threshold"],
+            "inference_size": ai_runtime["inference_size"],
+            "tracking_iou_threshold": ai_runtime["tracking_iou_threshold"],
+            "incident_score_threshold": ai_runtime["incident_score_threshold"],
         },
     }
 
@@ -114,6 +121,7 @@ def run_benchmark_scenario(
     frame_limit: int = 120,
     warmup_frames: int = 10,
     notes: str = "",
+    quality_profile: str = "balanced",
 ):
     scenario = build_named_scenario(
         scenario_name,
@@ -141,6 +149,7 @@ def run_benchmark_scenario(
                 warmup_frames=case["warmup_frames"],
                 frames=frames[: case["frame_limit"]],
                 model=model,
+                quality_profile=quality_profile,
             )
             insert_benchmark_result(
                 run_id=run_id,
@@ -157,7 +166,7 @@ def run_benchmark_scenario(
                 detection_count_total=summary["detection_count_total"],
                 metadata=summary["metadata"],
             )
-            results.append({"scenario_name": scenario["name"], **summary})
+            results.append({"scenario_name": scenario["name"], "quality_profile": quality_profile, **summary})
     except Exception:
         complete_experiment_run(run_id=run_id, status="failed")
         raise

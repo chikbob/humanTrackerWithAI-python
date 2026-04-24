@@ -29,6 +29,8 @@ def process_source_frame(
     roi_config: dict,
     event_settings: dict,
     tracker_type: str = DEFAULT_TRACKER_TYPE,
+    tracking_iou_threshold: float = 0.5,
+    incident_score_threshold: float = 0.55,
 ):
     """Process one frame from a production source and return an annotated image."""
     start_ts = time.time()
@@ -38,6 +40,7 @@ def process_source_frame(
         tracker_type=tracker_type,
         inference_size=inference_size,
         conf_threshold=conf_threshold,
+        iou_threshold=tracking_iou_threshold,
     )
     processing_time_ms = (time.time() - start_ts) * 1000.0
 
@@ -87,18 +90,20 @@ def process_source_frame(
                 "roi_inside": roi_inside,
                 "roi_enter": roi_enter if track_id is not None else roi_inside,
                 "roi_exit": roi_exit if track_id is not None else False,
+                "incident_score": _compute_incident_score(conf=conf, roi_inside=roi_inside, track_id=track_id),
             }
             detections.append(detection)
-            register_detection_and_entry_events(
-                session_state,
-                session_state.db_insert_event,
-                session=session,
-                frame_index=frame_index,
-                detection=detection,
-                source_type=source["source_type"],
-                settings=event_settings,
-                notify_callback=lambda _msg: None,
-            )
+            if detection["incident_score"] >= incident_score_threshold:
+                register_detection_and_entry_events(
+                    session_state,
+                    session_state.db_insert_event,
+                    session=session,
+                    frame_index=frame_index,
+                    detection=detection,
+                    source_type=source["source_type"],
+                    settings=event_settings,
+                    notify_callback=lambda _msg: None,
+                )
             _draw_worker_box(frame_rgb, detection)
 
     process_disappeared_tracks(
@@ -149,7 +154,12 @@ def _draw_roi_overlay(frame_rgb, roi_config: dict):
 
 def _draw_worker_box(frame_rgb, detection: dict):
     x1, y1, x2, y2 = map(int, detection["box"])
-    label = f"person id:{detection['track_id']}" if detection.get("track_id") is not None else "person"
+    score = round(float(detection.get("incident_score") or 0.0), 2)
+    label = (
+        f"person id:{detection['track_id']} s:{score}"
+        if detection.get("track_id") is not None
+        else f"person s:{score}"
+    )
     cv2.rectangle(frame_rgb, (x1, y1), (x2, y2), (90, 220, 120), 2)
     cv2.putText(
         frame_rgb,
@@ -160,3 +170,12 @@ def _draw_worker_box(frame_rgb, detection: dict):
         (90, 220, 120),
         2,
     )
+
+
+def _compute_incident_score(*, conf: float, roi_inside: bool, track_id) -> float:
+    score = float(conf)
+    if roi_inside:
+        score += 0.15
+    if track_id is not None:
+        score += 0.05
+    return max(0.0, min(1.0, score))

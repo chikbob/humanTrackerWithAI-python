@@ -15,6 +15,9 @@ DEFAULT_IDENTITY_BACKEND = "disabled"
 DEFAULT_NOTIFY_MIN_SEVERITY = "high"
 DEFAULT_UI_ROLE = "admin"
 DEFAULT_UI_ACTOR = "Главный оператор"
+DEFAULT_AI_PROFILE = "balanced"
+DEFAULT_INCIDENT_SCORE_THRESHOLD = 0.55
+DEFAULT_TRACK_IOU_THRESHOLD = 0.5
 
 SOURCE_PROCESSING_DEFAULTS = {
     "enable_roi": True,
@@ -42,6 +45,9 @@ SYSTEM_SETTING_DEFAULTS = {
     "model_name": DEFAULT_MODEL_NAME,
     "tracker_type": DEFAULT_TRACKER_TYPE,
     "identity_backend": DEFAULT_IDENTITY_BACKEND,
+    "ai_quality_profile": DEFAULT_AI_PROFILE,
+    "incident_score_threshold": str(DEFAULT_INCIDENT_SCORE_THRESHOLD),
+    "tracking_iou_threshold": str(DEFAULT_TRACK_IOU_THRESHOLD),
     "active_access_point_id": "",
     "notifications_enabled": "0",
     "incident_notify_min_severity": DEFAULT_NOTIFY_MIN_SEVERITY,
@@ -57,6 +63,33 @@ TRACKER_OPTIONS = {
     "bytetrack": {"label": "ByteTrack", "tracker_config": "bytetrack.yaml", "use_tracking": True},
     "botsort": {"label": "BoT-SORT", "tracker_config": "botsort.yaml", "use_tracking": True},
     "detect_only": {"label": "Только детекция", "tracker_config": None, "use_tracking": False},
+}
+
+AI_QUALITY_PROFILES = {
+    "latency": {
+        "label": "Минимальная задержка",
+        "confidence_threshold": 0.35,
+        "inference_size": 416,
+        "tracker_type": "detect_only",
+        "tracking_iou_threshold": 0.45,
+        "incident_score_threshold": 0.65,
+    },
+    "balanced": {
+        "label": "Сбалансированный профиль",
+        "confidence_threshold": 0.45,
+        "inference_size": 512,
+        "tracker_type": "bytetrack",
+        "tracking_iou_threshold": 0.5,
+        "incident_score_threshold": 0.55,
+    },
+    "accuracy": {
+        "label": "Повышенная точность",
+        "confidence_threshold": 0.55,
+        "inference_size": 640,
+        "tracker_type": "botsort",
+        "tracking_iou_threshold": 0.6,
+        "incident_score_threshold": 0.45,
+    },
 }
 
 IDENTITY_BACKEND_OPTIONS = {
@@ -101,6 +134,36 @@ def build_identity_backend_config(value: str | None) -> dict:
     }
 
 
+def normalize_ai_quality_profile(value: str | None) -> str:
+    profile = (value or DEFAULT_AI_PROFILE).strip().lower()
+    return profile if profile in AI_QUALITY_PROFILES else DEFAULT_AI_PROFILE
+
+
+def build_ai_runtime_settings(settings: dict | None = None, source: dict | None = None) -> dict:
+    settings = settings or {}
+    source = source or {}
+    profile_key = normalize_ai_quality_profile(source.get("ai_profile_override") or settings.get("ai_quality_profile"))
+    profile = AI_QUALITY_PROFILES[profile_key]
+    confidence_threshold = float(source.get("conf_threshold_override") or settings.get("confidence_threshold") or profile["confidence_threshold"])
+    inference_size = int(source.get("inference_size_override") or settings.get("inference_size") or profile["inference_size"])
+    tracker_type = normalize_tracker_type(source.get("tracker_type_override") or settings.get("tracker_type") or profile["tracker_type"])
+    incident_score_threshold = float(
+        source.get("incident_threshold_override")
+        or settings.get("incident_score_threshold")
+        or profile["incident_score_threshold"]
+    )
+    tracking_iou_threshold = float(settings.get("tracking_iou_threshold") or profile["tracking_iou_threshold"])
+    return {
+        "profile_key": profile_key,
+        "profile_label": profile["label"],
+        "confidence_threshold": max(0.05, min(0.99, confidence_threshold)),
+        "inference_size": max(320, min(1280, inference_size)),
+        "tracker_type": tracker_type,
+        "incident_score_threshold": max(0.05, min(0.99, incident_score_threshold)),
+        "tracking_iou_threshold": max(0.1, min(0.95, tracking_iou_threshold)),
+    }
+
+
 def normalize_source_processing_config(source: dict | None = None) -> dict:
     source = source or {}
     defaults = build_default_source_processing_config()
@@ -124,6 +187,17 @@ def normalize_source_processing_config(source: dict | None = None) -> dict:
         else bool(source.get("rule_disappear_enabled", defaults["rule_disappear_enabled"])),
         "rule_disappear_seconds": int(source.get("rule_disappear_seconds", defaults["rule_disappear_seconds"])),
         "prolonged_presence_seconds": int(source.get("prolonged_presence_seconds", defaults["prolonged_presence_seconds"])),
+        "ai_profile_override": normalize_ai_quality_profile(source.get("ai_profile_override"))
+        if (source.get("ai_profile_override") or "").strip()
+        else "",
+        "conf_threshold_override": float(source.get("conf_threshold_override")) if source.get("conf_threshold_override") not in {None, ""} else None,
+        "inference_size_override": int(source.get("inference_size_override")) if source.get("inference_size_override") not in {None, ""} else None,
+        "tracker_type_override": normalize_tracker_type(source.get("tracker_type_override"))
+        if (source.get("tracker_type_override") or "").strip()
+        else "",
+        "incident_threshold_override": float(source.get("incident_threshold_override"))
+        if source.get("incident_threshold_override") not in {None, ""}
+        else None,
     }
     normalized["roi_x"] = max(0.0, min(100.0, normalized["roi_x"]))
     normalized["roi_y"] = max(0.0, min(100.0, normalized["roi_y"]))
@@ -133,4 +207,10 @@ def normalize_source_processing_config(source: dict | None = None) -> dict:
     normalized["rule_t"] = max(1, normalized["rule_t"])
     normalized["rule_disappear_seconds"] = max(1, normalized["rule_disappear_seconds"])
     normalized["prolonged_presence_seconds"] = max(1, normalized["prolonged_presence_seconds"])
+    if normalized["conf_threshold_override"] is not None:
+        normalized["conf_threshold_override"] = max(0.05, min(0.99, normalized["conf_threshold_override"]))
+    if normalized["incident_threshold_override"] is not None:
+        normalized["incident_threshold_override"] = max(0.05, min(0.99, normalized["incident_threshold_override"]))
+    if normalized["inference_size_override"] is not None:
+        normalized["inference_size_override"] = max(320, min(1280, normalized["inference_size_override"]))
     return normalized

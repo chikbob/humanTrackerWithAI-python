@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import cv2
 
-from config.app_config import SYSTEM_SETTING_DEFAULTS, normalize_source_processing_config, normalize_tracker_type
+from config.app_config import SYSTEM_SETTING_DEFAULTS, build_ai_runtime_settings, normalize_source_processing_config, normalize_tracker_type
 from db.repository import (
     db_insert_event,
     load_active_video_sources,
@@ -77,6 +77,9 @@ class SourceWorker:
             "source_timeout": int(settings["source_timeout"]),
             "model_name": settings["model_name"],
             "tracker_type": normalize_tracker_type(settings.get("tracker_type")),
+            "ai_quality_profile": settings.get("ai_quality_profile", "balanced"),
+            "incident_score_threshold": float(settings.get("incident_score_threshold", 0.55)),
+            "tracking_iou_threshold": float(settings.get("tracking_iou_threshold", 0.5)),
             "default_access_point_id": int(settings["active_access_point_id"]) if settings["active_access_point_id"] else None,
         }
 
@@ -154,6 +157,7 @@ class SourceWorker:
             self.source_sessions[source_id] = session
 
         source_config = normalize_source_processing_config(source)
+        ai_runtime = build_ai_runtime_settings(settings, source)
         active_zones = load_zones(source_id=source_id)
         active_rules = load_zone_rules(source_id=source_id)
         rule_profile = build_effective_rule_profile(source=source, zones=active_zones, zone_rules=active_rules)
@@ -166,6 +170,7 @@ class SourceWorker:
                 "default_access_point_id": settings["default_access_point_id"],
                 # Keep source-level config as fallback metadata for legacy behavior and future rules.
                 "legacy_source_config": source_config,
+                "ai_runtime": ai_runtime,
             }
         )
 
@@ -176,11 +181,13 @@ class SourceWorker:
             session_state=self.session_state,
             session=session,
             frame_index=source_runtime["frame_index"],
-            conf_threshold=settings["confidence_threshold"],
-            inference_size=settings["inference_size"],
+            conf_threshold=ai_runtime["confidence_threshold"],
+            inference_size=ai_runtime["inference_size"],
             roi_config=roi_config,
             event_settings=event_settings,
-            tracker_type=settings["tracker_type"],
+            tracker_type=ai_runtime["tracker_type"],
+            tracking_iou_threshold=ai_runtime["tracking_iou_threshold"],
+            incident_score_threshold=ai_runtime["incident_score_threshold"],
         )
         snapshot_path = write_snapshot_atomic(source_id, cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))
         now_ts = time.time()

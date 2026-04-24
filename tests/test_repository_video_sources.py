@@ -35,6 +35,11 @@ class RepositoryVideoSourceConfigTests(unittest.TestCase):
             rule_disappear_enabled=False,
             rule_disappear_seconds=9,
             prolonged_presence_seconds=33,
+            ai_profile_override="accuracy",
+            conf_threshold_override=0.7,
+            inference_size_override=960,
+            tracker_type_override="botsort",
+            incident_threshold_override=0.8,
         )
 
         source = repository.load_video_sources()[0]
@@ -49,6 +54,11 @@ class RepositoryVideoSourceConfigTests(unittest.TestCase):
         self.assertFalse(source["rule_disappear_enabled"])
         self.assertEqual(source["rule_disappear_seconds"], 9)
         self.assertEqual(source["prolonged_presence_seconds"], 33)
+        self.assertEqual(source["ai_profile_override"], "accuracy")
+        self.assertEqual(source["conf_threshold_override"], 0.7)
+        self.assertEqual(source["inference_size_override"], 960)
+        self.assertEqual(source["tracker_type_override"], "botsort")
+        self.assertEqual(source["incident_threshold_override"], 0.8)
 
     def test_video_source_processing_config_is_normalized_on_update(self):
         repository.create_video_source(

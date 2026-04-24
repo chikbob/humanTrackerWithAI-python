@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from config.app_config import (
+    AI_QUALITY_PROFILES,
     DEFAULT_IDENTITY_BACKEND,
     DEFAULT_MODEL_NAME,
     DEFAULT_TRACKER_TYPE,
@@ -83,6 +84,14 @@ def render_system_settings(
                     step=30,
                     help="0 отключает автоматическую синхронизацию справочника сотрудников.",
                 )
+                incident_score_threshold = st.slider(
+                    "Порог incident score",
+                    min_value=0.05,
+                    max_value=0.95,
+                    value=float(settings.get("incident_score_threshold", 0.55)),
+                    step=0.05,
+                    help="Минимальный aggregated score для регистрации инцидентного события в production pipeline.",
+                )
             with col3:
                 model_name = st.selectbox(
                     "Активная модель",
@@ -108,6 +117,21 @@ def render_system_settings(
                     format_func=lambda key: IDENTITY_BACKEND_OPTIONS[key]["label"],
                 )
                 debug_mode = st.toggle("Режим отладки", value=str(settings.get("debug_mode", "0")) == "1")
+                ai_quality_profile = st.selectbox(
+                    "AI quality profile",
+                    options=list(AI_QUALITY_PROFILES.keys()),
+                    index=list(AI_QUALITY_PROFILES.keys()).index(settings.get("ai_quality_profile", "balanced"))
+                    if settings.get("ai_quality_profile", "balanced") in AI_QUALITY_PROFILES
+                    else 1,
+                    format_func=lambda key: AI_QUALITY_PROFILES[key]["label"],
+                )
+                tracking_iou_threshold = st.slider(
+                    "Tracking IoU threshold",
+                    min_value=0.10,
+                    max_value=0.95,
+                    value=float(settings.get("tracking_iou_threshold", 0.5)),
+                    step=0.05,
+                )
                 active_access_point = st.selectbox(
                     "Приоритетная зона контроля",
                     options=list(point_options.keys()) if point_options else ["не задана"],
@@ -125,9 +149,12 @@ def render_system_settings(
                 set_system_setting_fn(key="reconnect_interval", value=str(reconnect_interval))
                 set_system_setting_fn(key="source_timeout", value=str(source_timeout))
                 set_system_setting_fn(key="employee_sync_interval", value=str(employee_sync_interval))
+                set_system_setting_fn(key="incident_score_threshold", value=str(incident_score_threshold))
                 set_system_setting_fn(key="model_name", value=model_name)
                 set_system_setting_fn(key="tracker_type", value=tracker_type)
                 set_system_setting_fn(key="identity_backend", value=identity_backend)
+                set_system_setting_fn(key="ai_quality_profile", value=ai_quality_profile)
+                set_system_setting_fn(key="tracking_iou_threshold", value=str(tracking_iou_threshold))
                 set_system_setting_fn(key="debug_mode", value="1" if debug_mode else "0")
                 if point_options:
                     set_system_setting_fn(key="active_access_point_id", value=str(point_options[active_access_point]))
@@ -137,6 +164,20 @@ def render_system_settings(
         "Параметры применяются к фоновому worker и production-режиму. "
         "При изменении критичных настроек источников рекомендуется перезапустить worker."
     )
+    with st.container(border=True):
+        st.subheader("AI / research profile")
+        selected_profile = settings.get("ai_quality_profile", "balanced")
+        profile_meta = AI_QUALITY_PROFILES.get(selected_profile, AI_QUALITY_PROFILES["balanced"])
+        st.caption(
+            "Профиль задаёт базовую стратегию для latency/accuracy trade-off. "
+            "На уровне камеры его можно переопределить в разделе подключения источников."
+        )
+        profile_cols = st.columns(5)
+        profile_cols[0].metric("Профиль", profile_meta["label"])
+        profile_cols[1].metric("Confidence", profile_meta["confidence_threshold"])
+        profile_cols[2].metric("Inference", profile_meta["inference_size"])
+        profile_cols[3].metric("Tracker", profile_meta["tracker_type"])
+        profile_cols[4].metric("Incident score", profile_meta["incident_score_threshold"])
     with st.container(border=True):
         st.subheader("Уведомления и интеграции")
         st.caption(

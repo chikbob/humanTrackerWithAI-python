@@ -6,6 +6,8 @@ from datetime import datetime
 
 import pandas as pd
 
+from config.app_config import AI_QUALITY_PROFILES, TRACKER_OPTIONS
+
 
 SOURCE_TYPES = {
     "rtsp": "RTSP/IP-камера",
@@ -90,6 +92,78 @@ def _render_source_processing_controls(st, *, prefix: str, source: dict | None =
         step=1,
         key=f"{prefix}_rule_disappear_seconds",
     )
+    st.markdown("**AI / исследовательские overrides**")
+    ai_col1, ai_col2 = st.columns(2)
+    with ai_col1:
+        ai_profile_options = [""] + list(AI_QUALITY_PROFILES.keys())
+        ai_profile_override = st.selectbox(
+            "Профиль качества",
+            options=ai_profile_options,
+            index=ai_profile_options.index(source.get("ai_profile_override", ""))
+            if source.get("ai_profile_override", "") in ai_profile_options
+            else 0,
+            format_func=lambda key: "Использовать системный профиль" if not key else AI_QUALITY_PROFILES[key]["label"],
+            key=f"{prefix}_ai_profile_override",
+        )
+        conf_threshold_override_enabled = st.checkbox(
+            "Переопределить confidence",
+            value=source.get("conf_threshold_override") is not None,
+            key=f"{prefix}_conf_threshold_override_enabled",
+        )
+        conf_threshold_override = (
+            st.slider(
+                "Camera confidence threshold",
+                min_value=0.05,
+                max_value=0.95,
+                value=float(source.get("conf_threshold_override") or 0.45),
+                step=0.05,
+                key=f"{prefix}_conf_threshold_override",
+            )
+            if conf_threshold_override_enabled
+            else None
+        )
+        incident_threshold_override_enabled = st.checkbox(
+            "Переопределить incident score",
+            value=source.get("incident_threshold_override") is not None,
+            key=f"{prefix}_incident_threshold_override_enabled",
+        )
+        incident_threshold_override = (
+            st.slider(
+                "Camera incident score threshold",
+                min_value=0.05,
+                max_value=0.95,
+                value=float(source.get("incident_threshold_override") or 0.55),
+                step=0.05,
+                key=f"{prefix}_incident_threshold_override",
+            )
+            if incident_threshold_override_enabled
+            else None
+        )
+    with ai_col2:
+        inference_size_override_enabled = st.checkbox(
+            "Переопределить размер инференса",
+            value=source.get("inference_size_override") is not None,
+            key=f"{prefix}_inference_size_override_enabled",
+        )
+        inference_size_override = (
+            st.selectbox(
+                "Camera inference size",
+                options=[320, 416, 512, 640, 960, 1280],
+                index=[320, 416, 512, 640, 960, 1280].index(int(source.get("inference_size_override") or 512)),
+                key=f"{prefix}_inference_size_override",
+            )
+            if inference_size_override_enabled
+            else None
+        )
+        tracker_type_override = st.selectbox(
+            "Camera tracking strategy",
+            options=[""] + list(TRACKER_OPTIONS.keys()),
+            index=([""] + list(TRACKER_OPTIONS.keys())).index(source.get("tracker_type_override", ""))
+            if source.get("tracker_type_override", "") in ([""] + list(TRACKER_OPTIONS.keys()))
+            else 0,
+            format_func=lambda key: "Использовать системный tracker" if not key else TRACKER_OPTIONS[key]["label"],
+            key=f"{prefix}_tracker_type_override",
+        )
 
     return {
         "enable_roi": enable_roi,
@@ -103,6 +177,11 @@ def _render_source_processing_controls(st, *, prefix: str, source: dict | None =
         "rule_disappear_enabled": rule_disappear_enabled,
         "rule_disappear_seconds": int(rule_disappear_seconds),
         "prolonged_presence_seconds": int(prolonged_presence_seconds),
+        "ai_profile_override": ai_profile_override,
+        "conf_threshold_override": conf_threshold_override,
+        "inference_size_override": int(inference_size_override) if inference_size_override is not None else None,
+        "tracker_type_override": tracker_type_override,
+        "incident_threshold_override": incident_threshold_override,
     }
 
 

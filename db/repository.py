@@ -106,6 +106,11 @@ def _video_source_columns_sql() -> list[tuple[str, str]]:
         ),
         ("rule_disappear_seconds", f"rule_disappear_seconds INTEGER DEFAULT {SOURCE_PROCESSING_DEFAULTS['rule_disappear_seconds']}"),
         ("prolonged_presence_seconds", f"prolonged_presence_seconds INTEGER DEFAULT {SOURCE_PROCESSING_DEFAULTS['prolonged_presence_seconds']}"),
+        ("ai_profile_override", "ai_profile_override TEXT"),
+        ("conf_threshold_override", "conf_threshold_override REAL"),
+        ("inference_size_override", "inference_size_override INTEGER"),
+        ("tracker_type_override", "tracker_type_override TEXT"),
+        ("incident_threshold_override", "incident_threshold_override REAL"),
     ]
 
 
@@ -114,7 +119,8 @@ def _video_source_select_columns() -> str:
         id, name, source_type, source_url, location, is_active, last_seen, description, created_at,
         enable_roi, roi_x, roi_y, roi_w, roi_h,
         rule_count_enabled, rule_n, rule_t, rule_disappear_enabled, rule_disappear_seconds,
-        prolonged_presence_seconds
+        prolonged_presence_seconds, ai_profile_override, conf_threshold_override, inference_size_override,
+        tracker_type_override, incident_threshold_override
     """
 
 
@@ -1770,6 +1776,11 @@ def create_video_source(
     rule_disappear_enabled: bool = True,
     rule_disappear_seconds: int = 5,
     prolonged_presence_seconds: int = 10,
+    ai_profile_override: str = "",
+    conf_threshold_override: float | None = None,
+    inference_size_override: int | None = None,
+    tracker_type_override: str = "",
+    incident_threshold_override: float | None = None,
 ):
     config = normalize_source_processing_config(
         {
@@ -1784,6 +1795,11 @@ def create_video_source(
             "rule_disappear_enabled": rule_disappear_enabled,
             "rule_disappear_seconds": rule_disappear_seconds,
             "prolonged_presence_seconds": prolonged_presence_seconds,
+            "ai_profile_override": ai_profile_override,
+            "conf_threshold_override": conf_threshold_override,
+            "inference_size_override": inference_size_override,
+            "tracker_type_override": tracker_type_override,
+            "incident_threshold_override": incident_threshold_override,
         }
     )
     conn = get_db_conn()
@@ -1793,9 +1809,10 @@ def create_video_source(
             name, source_type, source_url, location, is_active, last_seen, description, created_at,
             enable_roi, roi_x, roi_y, roi_w, roi_h,
             rule_count_enabled, rule_n, rule_t, rule_disappear_enabled, rule_disappear_seconds,
-            prolonged_presence_seconds
+            prolonged_presence_seconds, ai_profile_override, conf_threshold_override, inference_size_override,
+            tracker_type_override, incident_threshold_override
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             name.strip(),
@@ -1817,6 +1834,11 @@ def create_video_source(
             1 if config["rule_disappear_enabled"] else 0,
             config["rule_disappear_seconds"],
             config["prolonged_presence_seconds"],
+            config["ai_profile_override"] or None,
+            config["conf_threshold_override"],
+            config["inference_size_override"],
+            config["tracker_type_override"] or None,
+            config["incident_threshold_override"],
         ),
     )
     conn.commit()
@@ -2022,6 +2044,11 @@ def update_video_source(
     rule_disappear_enabled: bool = True,
     rule_disappear_seconds: int = 5,
     prolonged_presence_seconds: int = 10,
+    ai_profile_override: str = "",
+    conf_threshold_override: float | None = None,
+    inference_size_override: int | None = None,
+    tracker_type_override: str = "",
+    incident_threshold_override: float | None = None,
 ):
     config = normalize_source_processing_config(
         {
@@ -2036,6 +2063,11 @@ def update_video_source(
             "rule_disappear_enabled": rule_disappear_enabled,
             "rule_disappear_seconds": rule_disappear_seconds,
             "prolonged_presence_seconds": prolonged_presence_seconds,
+            "ai_profile_override": ai_profile_override,
+            "conf_threshold_override": conf_threshold_override,
+            "inference_size_override": inference_size_override,
+            "tracker_type_override": tracker_type_override,
+            "incident_threshold_override": incident_threshold_override,
         }
     )
     conn = get_db_conn()
@@ -2045,7 +2077,9 @@ def update_video_source(
         SET name = ?, source_type = ?, source_url = ?, location = ?, description = ?,
             enable_roi = ?, roi_x = ?, roi_y = ?, roi_w = ?, roi_h = ?,
             rule_count_enabled = ?, rule_n = ?, rule_t = ?, rule_disappear_enabled = ?,
-            rule_disappear_seconds = ?, prolonged_presence_seconds = ?
+            rule_disappear_seconds = ?, prolonged_presence_seconds = ?, ai_profile_override = ?,
+            conf_threshold_override = ?, inference_size_override = ?, tracker_type_override = ?,
+            incident_threshold_override = ?
         WHERE id = ?
         """,
         (
@@ -2065,6 +2099,11 @@ def update_video_source(
             1 if config["rule_disappear_enabled"] else 0,
             config["rule_disappear_seconds"],
             config["prolonged_presence_seconds"],
+            config["ai_profile_override"] or None,
+            config["conf_threshold_override"],
+            config["inference_size_override"],
+            config["tracker_type_override"] or None,
+            config["incident_threshold_override"],
             source_id,
         ),
     )
