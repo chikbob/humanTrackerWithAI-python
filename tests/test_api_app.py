@@ -63,6 +63,18 @@ class ApiAppTests(unittest.TestCase):
                 "identification_status": "unlinked",
             }
         )
+        repository.upsert_incident(
+            event_id="evt-api-1",
+            source_id=1,
+            zone_name="Gate A",
+            incident_type="person_detected_near_entry",
+            severity="medium",
+            status="new",
+            confidence=0.91,
+            snapshot_path="",
+            identification_status="unlinked",
+            started_at=time.time(),
+        )
         self.client = TestClient(create_app())
 
     def tearDown(self):
@@ -88,14 +100,33 @@ class ApiAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertIn("summary", payload)
+        self.assertIn("incidents_summary", payload)
         self.assertEqual(len(payload["recent_events"]), 1)
         self.assertEqual(payload["recent_events"][0]["event_id"], "evt-api-1")
+        self.assertEqual(len(payload["recent_incidents"]), 1)
 
     def test_video_source_activation_endpoint(self):
         source_id = repository.load_video_sources()[0]["id"]
         response = self.client.put(f"/api/v1/video-sources/{source_id}/active", params={"is_active": "false"})
         self.assertEqual(response.status_code, 200)
         self.assertFalse(repository.load_video_sources()[0]["is_active"])
+
+    def test_incidents_endpoint_and_status_update(self):
+        response = self.client.get("/api/v1/incidents")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload["items"]), 1)
+        incident_id = payload["items"][0]["id"]
+        self.assertIn("summary", payload)
+
+        update_response = self.client.put(
+            f"/api/v1/incidents/{incident_id}/status",
+            params={"status": "acknowledged", "operator_comment": "Checked by operator"},
+        )
+        self.assertEqual(update_response.status_code, 200)
+        updated = repository.load_incidents()[0]
+        self.assertEqual(updated["status"], "acknowledged")
+        self.assertEqual(updated["operator_comment"], "Checked by operator")
 
     def test_metrics_endpoint_returns_prometheus_payload(self):
         response = self.client.get("/metrics")

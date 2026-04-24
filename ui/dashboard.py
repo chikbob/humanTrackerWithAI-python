@@ -20,6 +20,7 @@ def render_dashboard(
     st,
     *,
     events: list[dict],
+    incidents: list[dict],
     worker_statuses: list[dict],
     video_sources: list[dict],
     access_points: list[dict],
@@ -43,11 +44,12 @@ def render_dashboard(
     top5.metric("Инциденты входа в зону", summary["entries_today"])
     top6.metric("Тревожные инциденты", summary["suspicious_today"])
 
+    active_incidents = [incident for incident in incidents if incident.get("status") in {"new", "acknowledged", "escalated"}]
     second1, second2, second3, second4 = st.columns(4)
     second1.metric("Источники online", summary["online_cameras"])
-    second2.metric("Всего событий за день", summary["total_events_today"])
-    second3.metric("Сотрудников в системе", len(employees))
-    second4.metric("Активных сотрудников", sum(1 for employee in employees if employee.get("status") == "active"))
+    second2.metric("Активные инциденты", len(active_incidents))
+    second3.metric("Критические инциденты", sum(1 for incident in incidents if incident.get("severity") == "critical"))
+    second4.metric("Ложные срабатывания", sum(1 for incident in incidents if incident.get("status") == "false_positive"))
 
     left_col, right_col = st.columns([1.55, 1.0], gap="large")
     with left_col:
@@ -81,21 +83,21 @@ def render_dashboard(
 
     with right_col:
         with st.container(border=True):
-            st.subheader("Последние зафиксированные инциденты")
+            st.subheader("Активные инциденты")
             recent_rows = [
                 {
-                    "Время": datetime.fromtimestamp(event["timestamp"]).strftime("%H:%M:%S"),
-                    "Инцидент": event.get("event_type"),
-                    "Источник": event.get("source_name"),
-                    "Зона": event.get("access_point_name") or "не задана",
-                    "Контекст": event.get("employee_name") or "не установлен",
-                    "Уверенность": round(event.get("confidence") or 0.0, 3),
+                    "Время": datetime.fromtimestamp(incident["started_at"]).strftime("%H:%M:%S"),
+                    "Инцидент": incident.get("incident_type"),
+                    "Источник": incident.get("source_name") or incident.get("source_id") or "—",
+                    "Зона": incident.get("zone_name") or "не задана",
+                    "Серьезность": incident.get("severity") or "—",
+                    "Статус": incident.get("status") or "—",
                 }
-                for event in events[:10]
+                for incident in (active_incidents[:10] or incidents[:10])
             ]
             st.dataframe(pd.DataFrame(recent_rows), width="stretch", hide_index=True)
         with st.container(border=True):
-            st.subheader("Топ инцидентов и сбои")
+            st.subheader("Топ инцидентов и эксплуатационные сбои")
             top_events = build_top_event_types(events, limit=6)
             st.dataframe(top_events.rename(columns={"event_type": "Тип инцидента", "count": "Количество"}), width="stretch", hide_index=True)
             offline_df = build_offline_source_summary(events)

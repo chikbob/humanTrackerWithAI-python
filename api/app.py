@@ -11,13 +11,15 @@ from db.repository import (
     link_event_to_employee,
     load_employees,
     load_events,
+    load_incidents,
     load_system_settings,
     load_video_sources,
     load_worker_statuses,
     set_system_setting,
     set_video_source_active,
+    update_incident_status,
 )
-from services.system_api import load_dashboard_summary
+from services.system_api import build_incident_summary, load_dashboard_summary
 from services.telemetry import build_prometheus_metrics, build_worker_runtime_metrics
 
 
@@ -97,6 +99,31 @@ def create_app() -> FastAPI:
         worker_statuses = load_worker_statuses()
         events = enrich_event_rows(load_events(limit=limit), video_sources, worker_statuses)
         return {"items": events}
+
+    @app.get("/api/v1/incidents")
+    def get_incidents(limit: int = Query(200, ge=1, le=5000)):
+        incidents = load_incidents(limit=limit)
+        return {"items": incidents, "summary": build_incident_summary(incidents)}
+
+    @app.put("/api/v1/incidents/{incident_id}/status")
+    def put_incident_status(
+        incident_id: int,
+        status: str = Query(..., min_length=1),
+        operator_comment: str = "",
+    ):
+        incident_ids = {incident["id"] for incident in load_incidents()}
+        if incident_id not in incident_ids:
+            raise HTTPException(status_code=404, detail="incident_not_found")
+        update_incident_status(
+            incident_id=incident_id,
+            status=status,
+            operator_comment=operator_comment,
+        )
+        return {
+            "incident_id": incident_id,
+            "status": status,
+            "operator_comment": operator_comment,
+        }
 
     @app.put("/api/v1/events/{event_id}/link")
     def put_event_link(event_id: str, employee_id: int = Query(..., ge=1), identification_status: str = Query(...), note: str = ""):

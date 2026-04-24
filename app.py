@@ -184,6 +184,7 @@ def main():
         render_dashboard(
             st,
             events=events,
+            incidents=incidents,
             worker_statuses=worker_statuses,
             video_sources=video_sources,
             access_points=access_points,
