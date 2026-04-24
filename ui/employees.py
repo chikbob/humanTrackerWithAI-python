@@ -36,11 +36,13 @@ def render_employees(
     sync_state: dict | None,
     employee_data_source: str,
     employee_directory_read_only: bool,
+    access_context: dict,
     sync_employee_directory_fn,
     create_employee_fn,
     update_employee_fn,
     update_employee_status_fn,
 ):
+    can_manage = access_context.get("role") == "admin"
     directory_summary = employee_directory_summary(sync_state)
     sync_cols = st.columns([1.0, 1.15, 1.15, 1.0])
     sync_cols[0].metric("Источник данных", employee_data_source)
@@ -58,11 +60,14 @@ def render_employees(
     action_cols = st.columns([0.95, 2.05])
     with action_cols[0]:
         if st.button("Синхронизировать справочник", width="stretch"):
-            sync_result = sync_employee_directory_fn()
-            if sync_result.get("last_error"):
-                st.error(f"Синхронизация завершилась с ошибкой: {sync_result['last_error']}")
+            if not can_manage:
+                st.error("Недостаточно прав для синхронизации справочника.")
             else:
-                st.success("Справочник сотрудников обновлен.")
+                sync_result = sync_employee_directory_fn()
+                if sync_result.get("last_error"):
+                    st.error(f"Синхронизация завершилась с ошибкой: {sync_result['last_error']}")
+                else:
+                    st.success("Справочник сотрудников обновлен.")
             st.rerun()
     with action_cols[1]:
         st.caption(
@@ -137,6 +142,8 @@ def render_employees(
             st.subheader("Добавление сотрудника")
             if employee_directory_read_only:
                 st.info("Справочник доступен только для чтения. Добавление сотрудников выполняется во внешней системе.")
+            elif not can_manage:
+                st.info("Добавление сотрудников доступно только администратору.")
             else:
                 with st.form("employee_create_form", clear_on_submit=True):
                     create_cols = st.columns(3)
@@ -176,6 +183,8 @@ def render_employees(
                 st.info("Нет сотрудников для редактирования.")
             elif employee_directory_read_only:
                 st.info("Справочник синхронизируется из внешнего источника. Локальное редактирование отключено.")
+            elif not can_manage:
+                st.info("Редактирование сотрудников доступно только администратору.")
             else:
                 labels = {
                     f"{employee.get('display_name') or employee['full_name']} [{employee.get('employee_number') or employee['id']}]": employee

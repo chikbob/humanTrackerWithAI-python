@@ -5,6 +5,7 @@ from __future__ import annotations
 from analytics.access import build_kpi_summary, enrich_event_rows
 from db.repository import (
     load_access_points,
+    load_audit_logs,
     load_employees,
     load_events,
     load_incidents,
@@ -52,4 +53,5 @@ def load_dashboard_summary(*, event_limit: int = 200) -> dict:
         "employees": employees,
         "recent_events": events[: min(event_limit, len(events))],
         "recent_incidents": incidents[: min(event_limit, len(incidents))],
+        "recent_audit_logs": load_audit_logs(limit=min(event_limit, 100)),
     }

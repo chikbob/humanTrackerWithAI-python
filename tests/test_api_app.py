@@ -140,6 +140,21 @@ class ApiAppTests(unittest.TestCase):
         self.assertIn("summary", payload)
         self.assertIn("telemetry", payload)
 
+    def test_audit_logs_endpoint_returns_items(self):
+        repository.append_audit_log(
+            actor_name="API Operator",
+            actor_role="admin",
+            action="incident.status_updated",
+            resource_type="incident",
+            resource_id="1",
+            details={"status": "new"},
+        )
+        response = self.client.get("/api/v1/audit-logs")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload["items"]), 1)
+        self.assertEqual(payload["items"][0]["actor_name"], "API Operator")
+
 
 if __name__ == "__main__":
     unittest.main()

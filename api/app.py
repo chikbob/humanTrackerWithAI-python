@@ -7,8 +7,10 @@ from fastapi import FastAPI, HTTPException, Query
 
 from analytics.access import enrich_event_rows
 from db.repository import (
+    append_audit_log,
     init_db,
     link_event_to_employee,
+    load_audit_logs,
     load_employees,
     load_events,
     load_incidents,
@@ -69,8 +71,16 @@ def create_app() -> FastAPI:
         return {"items": load_system_settings()}
 
     @app.put("/api/v1/system/settings/{key}")
-    def put_system_setting(key: str, value: str = Query(..., min_length=1)):
+    def put_system_setting(key: str, value: str = Query(..., min_length=1), actor_name: str = "api", actor_role: str = "admin"):
         set_system_setting(key=key, value=value)
+        append_audit_log(
+            actor_name=actor_name,
+            actor_role=actor_role,
+            action="system_setting.updated",
+            resource_type="system_setting",
+            resource_id=key,
+            details={"value": value},
+        )
         return {"key": key, "value": value}
 
     @app.get("/api/v1/video-sources")
@@ -78,11 +88,19 @@ def create_app() -> FastAPI:
         return {"items": load_video_sources()}
 
     @app.put("/api/v1/video-sources/{source_id}/active")
-    def put_video_source_active(source_id: int, is_active: bool = Query(...)):
+    def put_video_source_active(source_id: int, is_active: bool = Query(...), actor_name: str = "api", actor_role: str = "admin"):
         existing = {source["id"] for source in load_video_sources()}
         if source_id not in existing:
             raise HTTPException(status_code=404, detail="source_not_found")
         set_video_source_active(source_id=source_id, is_active=is_active)
+        append_audit_log(
+            actor_name=actor_name,
+            actor_role=actor_role,
+            action="video_source.activation_changed",
+            resource_type="video_source",
+            resource_id=str(source_id),
+            details={"is_active": bool(is_active)},
+        )
         return {"source_id": source_id, "is_active": is_active}
 
     @app.get("/api/v1/worker-status")
@@ -110,6 +128,8 @@ def create_app() -> FastAPI:
         incident_id: int,
         status: str = Query(..., min_length=1),
         operator_comment: str = "",
+        actor_name: str = "api",
+        actor_role: str = "admin",
     ):
         incident_ids = {incident["id"] for incident in load_incidents()}
         if incident_id not in incident_ids:
@@ -119,6 +139,14 @@ def create_app() -> FastAPI:
             status=status,
             operator_comment=operator_comment,
         )
+        append_audit_log(
+            actor_name=actor_name,
+            actor_role=actor_role,
+            action="incident.status_updated",
+            resource_type="incident",
+            resource_id=str(incident_id),
+            details={"status": status, "operator_comment": operator_comment},
+        )
         return {
             "incident_id": incident_id,
             "status": status,
@@ -126,7 +154,14 @@ def create_app() -> FastAPI:
         }
 
     @app.put("/api/v1/events/{event_id}/link")
-    def put_event_link(event_id: str, employee_id: int = Query(..., ge=1), identification_status: str = Query(...), note: str = ""):
+    def put_event_link(
+        event_id: str,
+        employee_id: int = Query(..., ge=1),
+        identification_status: str = Query(...),
+        note: str = "",
+        actor_name: str = "api",
+        actor_role: str = "admin",
+    ):
         try:
             link_event_to_employee(
                 event_id=event_id,
@@ -138,6 +173,14 @@ def create_app() -> FastAPI:
             detail = str(exc)
             status_code = 404 if detail.startswith(("event_not_found", "employee_not_found")) else 400
             raise HTTPException(status_code=status_code, detail=detail) from exc
+        append_audit_log(
+            actor_name=actor_name,
+            actor_role=actor_role,
+            action="incident.context_linked",
+            resource_type="event",
+            resource_id=event_id,
+            details={"employee_id": employee_id, "identification_status": identification_status},
+        )
         return {
             "event_id": event_id,
             "employee_id": employee_id,
@@ -148,6 +191,10 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/dashboard/summary")
     def get_dashboard_summary(event_limit: int = Query(200, ge=1, le=5000)):
         return load_dashboard_summary(event_limit=event_limit)
+
+    @app.get("/api/v1/audit-logs")
+    def get_audit_logs(limit: int = Query(200, ge=1, le=5000)):
+        return {"items": load_audit_logs(limit=limit)}
 
     return app
 

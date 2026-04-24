@@ -48,6 +48,10 @@ def init_session_state(session_state, load_history_from_db):
         session_state.notifications = []
     if "running" not in session_state:
         session_state.running = False
+    if "current_user_role" not in session_state:
+        session_state.current_user_role = "admin"
+    if "current_user_name" not in session_state:
+        session_state.current_user_name = "Главный оператор"
     for session in session_state.sessions:
         ensure_runtime_state(session)
 

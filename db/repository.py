@@ -261,6 +261,20 @@ def init_db():
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor_name TEXT NOT NULL DEFAULT '',
+            actor_role TEXT NOT NULL DEFAULT 'admin',
+            action TEXT NOT NULL DEFAULT '',
+            resource_type TEXT NOT NULL DEFAULT '',
+            resource_id TEXT,
+            details_json TEXT,
+            created_at REAL
+        )
+        """
+    )
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS events (
             event_id TEXT PRIMARY KEY,
             session_id TEXT,
@@ -669,6 +683,19 @@ def init_db():
             ("sent_at", "sent_at REAL"),
             ("created_at", "created_at REAL"),
             ("updated_at", "updated_at REAL"),
+        ],
+    )
+    _ensure_columns(
+        conn,
+        "audit_logs",
+        [
+            ("actor_name", "actor_name TEXT NOT NULL DEFAULT ''"),
+            ("actor_role", "actor_role TEXT NOT NULL DEFAULT 'admin'"),
+            ("action", "action TEXT NOT NULL DEFAULT ''"),
+            ("resource_type", "resource_type TEXT NOT NULL DEFAULT ''"),
+            ("resource_id", "resource_id TEXT"),
+            ("details_json", "details_json TEXT"),
+            ("created_at", "created_at REAL"),
         ],
     )
     _ensure_columns(
@@ -1566,6 +1593,59 @@ def load_notification_deliveries(*, incident_id: int | None = None):
         ).fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+def append_audit_log(
+    *,
+    actor_name: str,
+    actor_role: str,
+    action: str,
+    resource_type: str,
+    resource_id: str = "",
+    details: dict | None = None,
+):
+    conn = get_db_conn()
+    conn.execute(
+        """
+        INSERT INTO audit_logs (
+            actor_name, actor_role, action, resource_type, resource_id, details_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            actor_name.strip(),
+            actor_role.strip(),
+            action.strip(),
+            resource_type.strip(),
+            str(resource_id).strip(),
+            json.dumps(details or {}, ensure_ascii=False),
+            time.time(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_audit_logs(*, limit: int = 200):
+    conn = get_db_conn()
+    rows = conn.execute(
+        """
+        SELECT id, actor_name, actor_role, action, resource_type, resource_id, details_json, created_at
+        FROM audit_logs
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+        """,
+        (int(limit),),
+    ).fetchall()
+    conn.close()
+    normalized_rows = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["details"] = json.loads(item.get("details_json") or "{}")
+        except json.JSONDecodeError:
+            item["details"] = {}
+        normalized_rows.append(item)
+    return normalized_rows
 
 
 def replace_employee_cache(employees: list[dict], *, source_system: str, synced_at=None):

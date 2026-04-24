@@ -111,11 +111,15 @@ def render_video_sources(
     *,
     video_sources: list[dict],
     worker_statuses: list[dict],
+    access_context: dict,
     create_video_source_fn,
     update_video_source_fn,
     set_video_source_active_fn,
     test_connection_fn,
 ):
+    can_manage = access_context.get("role") == "admin"
+    if not can_manage:
+        st.info("Управление подключением камер доступно только администратору. Экран открыт в режиме просмотра.")
     production_sources, lab_sources = split_video_sources(video_sources)
     statuses_by_source = {status["source_id"]: status for status in worker_statuses}
     source_labels = {f"{source['name']} [{source['id']}]": source for source in video_sources}
@@ -173,7 +177,9 @@ def render_video_sources(
             submitted = st.form_submit_button("Сохранить источник")
         if submitted:
             normalized_source_url = source_url.strip()
-            if not name.strip() or not normalized_source_url:
+            if not can_manage:
+                st.error("Недостаточно прав для добавления камер.")
+            elif not name.strip() or not normalized_source_url:
                 st.error("Необходимо указать название и значение источника.")
             else:
                 create_video_source_fn(
@@ -204,10 +210,13 @@ def render_video_sources(
                 help="В production-мониторинг попадают только эти камеры. Лабораторные browser-источники активируются отдельно.",
             )
             if st.button("Сохранить набор активных источников", type="primary"):
-                selected_set = set(selected_active_ids)
-                for source in production_sources:
-                    set_video_source_active_fn(source_id=source["id"], is_active=source["id"] in selected_set)
-                st.success("Набор active production-камер обновлен.")
+                if not can_manage:
+                    st.error("Недостаточно прав для изменения активных камер.")
+                else:
+                    selected_set = set(selected_active_ids)
+                    for source in production_sources:
+                        set_video_source_active_fn(source_id=source["id"], is_active=source["id"] in selected_set)
+                    st.success("Набор active production-камер обновлен.")
                 st.rerun()
 
             if lab_sources:
@@ -233,16 +242,19 @@ def render_video_sources(
                 processing_config = _render_source_processing_controls(st, prefix=f"edit_source_{selected['id']}", source=selected)
                 save = st.form_submit_button("Сохранить изменения")
             if save:
-                update_video_source_fn(
-                    source_id=selected["id"],
-                    name=name,
-                    source_type=source_type,
-                    source_url=source_url,
-                    location=location,
-                    description=description,
-                    **processing_config,
-                )
-                st.success("Источник обновлен.")
+                if not can_manage:
+                    st.error("Недостаточно прав для редактирования камер.")
+                else:
+                    update_video_source_fn(
+                        source_id=selected["id"],
+                        name=name,
+                        source_type=source_type,
+                        source_url=source_url,
+                        location=location,
+                        description=description,
+                        **processing_config,
+                    )
+                    st.success("Источник обновлен.")
                 st.rerun()
 
     with tab_check:
@@ -305,7 +317,9 @@ def render_video_sources(
                 browser_active = st.checkbox("Включить источник", value=False)
                 browser_submit = st.form_submit_button("Добавить browser-live источник")
             if browser_submit:
-                if not browser_name.strip():
+                if not can_manage:
+                    st.error("Недостаточно прав для добавления лабораторного источника.")
+                elif not browser_name.strip():
                     st.error("Укажите наименование browser-live источника.")
                 else:
                     create_video_source_fn(
@@ -324,16 +338,19 @@ def render_video_sources(
         with quick_col1:
             st.caption("Быстрый preset для браузерной камеры iPhone")
             if st.button("Добавить источник «iPhone Safari Camera»"):
-                create_video_source_fn(
-                    name="iPhone Safari Camera",
-                    source_type="browser_camera",
-                    source_url="browser_camera",
-                    location="mobile",
-                    description="Мобильная браузерная камера iPhone",
-                    is_active=True,
-                    **_render_source_processing_defaults(),
-                )
-                st.success("Источник для Safari-камеры iPhone добавлен.")
+                if not can_manage:
+                    st.error("Недостаточно прав для добавления мобильной камеры.")
+                else:
+                    create_video_source_fn(
+                        name="iPhone Safari Camera",
+                        source_type="browser_camera",
+                        source_url="browser_camera",
+                        location="mobile",
+                        description="Мобильная браузерная камера iPhone",
+                        is_active=True,
+                        **_render_source_processing_defaults(),
+                    )
+                    st.success("Источник для Safari-камеры iPhone добавлен.")
                 st.rerun()
         with quick_col2:
             with st.form("iphone_network_camera_form"):
@@ -349,7 +366,9 @@ def render_video_sources(
                 iphone_active = st.checkbox("Активировать сразу", value=True)
                 iphone_submit = st.form_submit_button("Добавить сетевой источник iPhone")
             if iphone_submit:
-                if not iphone_name.strip() or not iphone_url.strip():
+                if not can_manage:
+                    st.error("Недостаточно прав для добавления сетевой камеры.")
+                elif not iphone_name.strip() or not iphone_url.strip():
                     st.error("Для сетевой камеры iPhone нужно указать название и URL потока.")
                 else:
                     create_video_source_fn(

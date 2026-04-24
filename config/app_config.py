@@ -13,6 +13,8 @@ DEFAULT_EMPLOYEE_SYNC_INTERVAL = 300
 DEFAULT_TRACKER_TYPE = "bytetrack"
 DEFAULT_IDENTITY_BACKEND = "disabled"
 DEFAULT_NOTIFY_MIN_SEVERITY = "high"
+DEFAULT_UI_ROLE = "admin"
+DEFAULT_UI_ACTOR = "Главный оператор"
 
 SOURCE_PROCESSING_DEFAULTS = {
     "enable_roi": True,
@@ -48,6 +50,7 @@ SYSTEM_SETTING_DEFAULTS = {
     "telegram_enabled": "0",
     "telegram_bot_token": "",
     "telegram_chat_id": "",
+    "security_rbac_enabled": "1",
 }
 
 TRACKER_OPTIONS = {

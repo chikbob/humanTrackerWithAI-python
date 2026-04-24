@@ -17,9 +17,13 @@ def render_system_settings(
     *,
     settings: dict,
     access_points: list[dict],
+    access_context: dict,
     set_system_setting_fn,
     reset_and_seed_demo_data_fn,
 ):
+    can_manage = access_context.get("role") == "admin"
+    if not can_manage:
+        st.info("Настройки системы доступны только администратору. Экран открыт в режиме просмотра.")
     st.subheader("Настройки системы")
     point_options = {point["name"]: point["id"] for point in access_points}
     default_point_name = next(
@@ -111,20 +115,23 @@ def render_system_settings(
                 )
             submitted = st.form_submit_button("Сохранить настройки")
         if submitted:
-            set_system_setting_fn(key="confidence_threshold", value=str(confidence_threshold))
-            set_system_setting_fn(key="frame_skip", value=str(frame_skip))
-            set_system_setting_fn(key="inference_size", value=str(inference_size))
-            set_system_setting_fn(key="event_cooldown", value=str(event_cooldown))
-            set_system_setting_fn(key="reconnect_interval", value=str(reconnect_interval))
-            set_system_setting_fn(key="source_timeout", value=str(source_timeout))
-            set_system_setting_fn(key="employee_sync_interval", value=str(employee_sync_interval))
-            set_system_setting_fn(key="model_name", value=model_name)
-            set_system_setting_fn(key="tracker_type", value=tracker_type)
-            set_system_setting_fn(key="identity_backend", value=identity_backend)
-            set_system_setting_fn(key="debug_mode", value="1" if debug_mode else "0")
-            if point_options:
-                set_system_setting_fn(key="active_access_point_id", value=str(point_options[active_access_point]))
-            st.success("Настройки сохранены.")
+            if not can_manage:
+                st.error("Недостаточно прав для изменения настроек системы.")
+            else:
+                set_system_setting_fn(key="confidence_threshold", value=str(confidence_threshold))
+                set_system_setting_fn(key="frame_skip", value=str(frame_skip))
+                set_system_setting_fn(key="inference_size", value=str(inference_size))
+                set_system_setting_fn(key="event_cooldown", value=str(event_cooldown))
+                set_system_setting_fn(key="reconnect_interval", value=str(reconnect_interval))
+                set_system_setting_fn(key="source_timeout", value=str(source_timeout))
+                set_system_setting_fn(key="employee_sync_interval", value=str(employee_sync_interval))
+                set_system_setting_fn(key="model_name", value=model_name)
+                set_system_setting_fn(key="tracker_type", value=tracker_type)
+                set_system_setting_fn(key="identity_backend", value=identity_backend)
+                set_system_setting_fn(key="debug_mode", value="1" if debug_mode else "0")
+                if point_options:
+                    set_system_setting_fn(key="active_access_point_id", value=str(point_options[active_access_point]))
+                st.success("Настройки сохранены.")
             st.rerun()
     st.caption(
         "Параметры применяются к фоновому worker и production-режиму. "
@@ -182,14 +189,17 @@ def render_system_settings(
                 )
             notification_submitted = st.form_submit_button("Сохранить каналы уведомлений")
         if notification_submitted:
-            set_system_setting_fn(key="notifications_enabled", value="1" if notifications_enabled else "0")
-            set_system_setting_fn(key="incident_notify_min_severity", value=incident_notify_min_severity)
-            set_system_setting_fn(key="webhook_enabled", value="1" if webhook_enabled else "0")
-            set_system_setting_fn(key="webhook_url", value=webhook_url.strip())
-            set_system_setting_fn(key="telegram_enabled", value="1" if telegram_enabled else "0")
-            set_system_setting_fn(key="telegram_bot_token", value=telegram_bot_token.strip())
-            set_system_setting_fn(key="telegram_chat_id", value=telegram_chat_id.strip())
-            st.success("Настройки уведомлений сохранены.")
+            if not can_manage:
+                st.error("Недостаточно прав для изменения каналов уведомлений.")
+            else:
+                set_system_setting_fn(key="notifications_enabled", value="1" if notifications_enabled else "0")
+                set_system_setting_fn(key="incident_notify_min_severity", value=incident_notify_min_severity)
+                set_system_setting_fn(key="webhook_enabled", value="1" if webhook_enabled else "0")
+                set_system_setting_fn(key="webhook_url", value=webhook_url.strip())
+                set_system_setting_fn(key="telegram_enabled", value="1" if telegram_enabled else "0")
+                set_system_setting_fn(key="telegram_bot_token", value=telegram_bot_token.strip())
+                set_system_setting_fn(key="telegram_chat_id", value=telegram_chat_id.strip())
+                st.success("Настройки уведомлений сохранены.")
             st.rerun()
     with st.container(border=True):
         st.subheader("Сервисные операции с БД")
@@ -206,7 +216,9 @@ def render_system_settings(
             random_seed = st.number_input("Seed", min_value=1, max_value=99999, value=42, step=1)
         confirm_reset = st.checkbox("Подтверждаю полную очистку и пересоздание данных")
         if st.button("Очистить БД и заполнить демонстрационными данными", type="primary"):
-            if not confirm_reset:
+            if not can_manage:
+                st.error("Недостаточно прав для сервисных операций с базой.")
+            elif not confirm_reset:
                 st.error("Подтвердите операцию очистки базы.")
             else:
                 result = reset_and_seed_demo_data_fn(

@@ -9,6 +9,7 @@ import streamlit as st
 from analytics.access import enrich_event_rows
 from core.detection import build_class_meta, load_model
 from db.repository import (
+    append_audit_log,
     create_employee,
     create_video_source,
     create_zone,
@@ -19,6 +20,7 @@ from db.repository import (
     ensure_demo_employees,
     init_db,
     load_access_points,
+    load_audit_logs,
     load_events,
     load_history_from_db,
     load_employee_sync_state,
@@ -47,6 +49,7 @@ from db.repository import (
     update_zone,
     update_zone_rule,
 )
+from services.auth import assert_permission, build_access_context, ensure_access_context
 from services.employee_repository import build_employee_repository
 from services.employee_sync import maybe_sync_employee_directory
 from services.identity_service import build_identity_runtime_state
@@ -62,6 +65,7 @@ from ui.monitoring import render_online_monitoring
 from ui.page import configure_page
 from ui.settings import render_system_settings
 from ui.sidebar import ANIMAL_CLASSES, render_app_sidebar
+from ui.security import render_security_audit
 from ui.sources import render_video_sources
 from ui.zones import render_zones
 
@@ -76,6 +80,7 @@ logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").set
 def main():
     init_db()
     init_session_state(st.session_state, load_history_from_db)
+    ensure_access_context(st.session_state)
     query_params = st.query_params
     standalone_live_mode = query_params.get("view", "") == "live-window"
     standalone_overlay_enabled = query_params.get("overlay", "1") != "0"
@@ -115,6 +120,7 @@ def main():
     system_settings = load_system_settings()
     video_sources = load_video_sources()
     production_video_sources = [source for source in video_sources if source.get("source_type") in PRODUCTION_SOURCE_TYPES]
+    access_context = build_access_context(st.session_state)
     if standalone_live_mode:
         sidebar_state = {
             "section": "Онлайн-мониторинг",
@@ -128,8 +134,10 @@ def main():
             st,
             video_sources=production_video_sources,
             system_settings=system_settings,
+            access_context=access_context,
             monitored_source_count=monitored_source_count,
         )
+        access_context = build_access_context(st.session_state)
         ensure_demo_employees()
 
     access_points = load_access_points()
@@ -157,6 +165,7 @@ def main():
         identity_backend=identity_backend,
     )
     worker_statuses = load_worker_statuses()
+    audit_logs = load_audit_logs(limit=300)
     zones = load_zones()
     zone_rules = load_zone_rules()
     raw_events = load_events(limit=5000)
@@ -169,6 +178,107 @@ def main():
         load_notification_deliveries_fn=load_notification_deliveries,
         upsert_notification_delivery_fn=upsert_notification_delivery,
     )
+
+    def audit(action: str, resource_type: str, resource_id: str = "", details: dict | None = None):
+        append_audit_log(
+            actor_name=access_context["actor_name"],
+            actor_role=access_context["role"],
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            details=details or {},
+        )
+
+    def guarded_set_system_setting(*, key: str, value: str):
+        assert_permission(access_context, "manage_settings")
+        set_system_setting(key=key, value=value)
+        audit("system_setting.updated", "system_setting", key, {"value": value})
+
+    def guarded_update_incident_status(*, incident_id: int, status: str, operator_comment: str | None = None):
+        assert_permission(access_context, "update_incidents")
+        update_incident_status(incident_id=incident_id, status=status, operator_comment=operator_comment)
+        audit("incident.status_updated", "incident", str(incident_id), {"status": status, "operator_comment": operator_comment or ""})
+
+    def guarded_link_event_to_employee(*, event_id: str, employee_id: int, identification_status: str, note: str = ""):
+        assert_permission(access_context, "link_incidents")
+        link_event_to_employee(
+            event_id=event_id,
+            employee_id=employee_id,
+            identification_status=identification_status,
+            note=note,
+        )
+        audit(
+            "incident.context_linked",
+            "event",
+            event_id,
+            {"employee_id": employee_id, "identification_status": identification_status},
+        )
+
+    def guarded_create_video_source(**kwargs):
+        assert_permission(access_context, "manage_sources")
+        create_video_source(**kwargs)
+        audit("video_source.created", "video_source", kwargs.get("name", ""), {"source_type": kwargs.get("source_type")})
+
+    def guarded_update_video_source(*, source_id: int, **kwargs):
+        assert_permission(access_context, "manage_sources")
+        update_video_source(source_id=source_id, **kwargs)
+        audit("video_source.updated", "video_source", str(source_id), {"source_type": kwargs.get("source_type"), "name": kwargs.get("name")})
+
+    def guarded_set_video_source_active(*, source_id: int, is_active: bool):
+        assert_permission(access_context, "manage_sources")
+        set_video_source_active(source_id=source_id, is_active=is_active)
+        audit("video_source.activation_changed", "video_source", str(source_id), {"is_active": bool(is_active)})
+
+    def guarded_create_zone(**kwargs):
+        assert_permission(access_context, "manage_zones")
+        create_zone(**kwargs)
+        audit("zone.created", "zone", kwargs.get("name", ""), {"source_id": kwargs.get("source_id"), "zone_type": kwargs.get("zone_type")})
+
+    def guarded_update_zone(*, zone_id: int, **kwargs):
+        assert_permission(access_context, "manage_zones")
+        update_zone(zone_id=zone_id, **kwargs)
+        audit("zone.updated", "zone", str(zone_id), {"source_id": kwargs.get("source_id"), "zone_type": kwargs.get("zone_type")})
+
+    def guarded_set_zone_active(*, zone_id: int, is_active: bool):
+        assert_permission(access_context, "manage_zones")
+        set_zone_active(zone_id=zone_id, is_active=is_active)
+        audit("zone.activation_changed", "zone", str(zone_id), {"is_active": bool(is_active)})
+
+    def guarded_create_zone_rule(**kwargs):
+        assert_permission(access_context, "manage_zones")
+        create_zone_rule(**kwargs)
+        audit("zone_rule.created", "zone_rule", kwargs.get("rule_type", ""), {"zone_id": kwargs.get("zone_id"), "severity": kwargs.get("severity")})
+
+    def guarded_update_zone_rule(*, rule_id: int, **kwargs):
+        assert_permission(access_context, "manage_zones")
+        update_zone_rule(rule_id=rule_id, **kwargs)
+        audit("zone_rule.updated", "zone_rule", str(rule_id), {"zone_id": kwargs.get("zone_id"), "severity": kwargs.get("severity")})
+
+    def guarded_set_zone_rule_active(*, rule_id: int, is_active: bool):
+        assert_permission(access_context, "manage_zones")
+        set_zone_rule_active(rule_id=rule_id, is_active=is_active)
+        audit("zone_rule.activation_changed", "zone_rule", str(rule_id), {"is_active": bool(is_active)})
+
+    def guarded_create_employee(**kwargs):
+        assert_permission(access_context, "manage_directory")
+        create_employee(**kwargs)
+        audit("employee.created", "employee", kwargs.get("employee_number", ""), {"full_name": kwargs.get("full_name")})
+
+    def guarded_update_employee(*, employee_id: int, **kwargs):
+        assert_permission(access_context, "manage_directory")
+        update_employee(employee_id=employee_id, **kwargs)
+        audit("employee.updated", "employee", str(employee_id), {"full_name": kwargs.get("full_name"), "status": kwargs.get("status")})
+
+    def guarded_update_employee_status(*, employee_id: int, status: str):
+        assert_permission(access_context, "manage_directory")
+        update_employee_status(employee_id=employee_id, status=status)
+        audit("employee.status_updated", "employee", str(employee_id), {"status": status})
+
+    def guarded_sync_employee_directory():
+        assert_permission(access_context, "manage_directory")
+        result = employee_repository.sync()
+        audit("employee_directory.synced", "employee_directory", employee_repository.source_name, {"status": result.get("sync_status"), "last_error": result.get("last_error", "")})
+        return result
 
     if not standalone_live_mode:
         with st.container():
@@ -228,25 +338,14 @@ def main():
             standalone_mode=standalone_live_mode,
             standalone_overlay_enabled=standalone_overlay_enabled,
         )
-    elif section == "Справочник персонала":
-        render_employees(
-            st,
-            employees=employees,
-            sync_state=employee_sync_state,
-            employee_data_source=employee_repository.source_name,
-            employee_directory_read_only=employee_repository.is_read_only(),
-            sync_employee_directory_fn=employee_repository.sync,
-            create_employee_fn=create_employee,
-            update_employee_fn=update_employee,
-            update_employee_status_fn=update_employee_status,
-        )
     elif section == "Журнал инцидентов":
         render_event_journal(
             st,
             incidents=incidents,
             employees=employees,
-            link_event_to_employee_fn=link_event_to_employee,
-            update_incident_status_fn=update_incident_status,
+            access_context=access_context,
+            link_event_to_employee_fn=guarded_link_event_to_employee,
+            update_incident_status_fn=guarded_update_incident_status,
         )
     elif section == "Аналитика и отчеты":
         render_access_analytics(st, events=events, worker_statuses=worker_statuses)
@@ -257,31 +356,49 @@ def main():
             worker_statuses=worker_statuses,
             zones=zones,
             zone_rules=zone_rules,
-            create_zone_fn=create_zone,
-            update_zone_fn=update_zone,
-            set_zone_active_fn=set_zone_active,
-            create_zone_rule_fn=create_zone_rule,
-            update_zone_rule_fn=update_zone_rule,
-            set_zone_rule_active_fn=set_zone_rule_active,
+            access_context=access_context,
+            create_zone_fn=guarded_create_zone,
+            update_zone_fn=guarded_update_zone,
+            set_zone_active_fn=guarded_set_zone_active,
+            create_zone_rule_fn=guarded_create_zone_rule,
+            update_zone_rule_fn=guarded_update_zone_rule,
+            set_zone_rule_active_fn=guarded_set_zone_rule_active,
         )
     elif section == "Подключение камер":
         render_video_sources(
             st,
             video_sources=video_sources,
             worker_statuses=worker_statuses,
-            create_video_source_fn=create_video_source,
-            update_video_source_fn=update_video_source,
-            set_video_source_active_fn=set_video_source_active,
+            access_context=access_context,
+            create_video_source_fn=guarded_create_video_source,
+            update_video_source_fn=guarded_update_video_source,
+            set_video_source_active_fn=guarded_set_video_source_active,
             test_connection_fn=test_video_source_connection,
+        )
+    elif section == "Справочник персонала":
+        render_employees(
+            st,
+            employees=employees,
+            sync_state=employee_sync_state,
+            employee_data_source=employee_repository.source_name,
+            employee_directory_read_only=employee_repository.is_read_only(),
+            access_context=access_context,
+            sync_employee_directory_fn=guarded_sync_employee_directory,
+            create_employee_fn=guarded_create_employee,
+            update_employee_fn=guarded_update_employee,
+            update_employee_status_fn=guarded_update_employee_status,
         )
     elif section == "Настройки системы":
         render_system_settings(
             st,
             settings=system_settings,
             access_points=access_points,
-            set_system_setting_fn=set_system_setting,
+            access_context=access_context,
+            set_system_setting_fn=guarded_set_system_setting,
             reset_and_seed_demo_data_fn=reset_and_seed_demo_data,
         )
+    elif section == "Доступ и аудит":
+        render_security_audit(st, access_context=access_context, audit_logs=audit_logs)
 
 
 if __name__ == "__main__":

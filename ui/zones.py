@@ -26,6 +26,7 @@ def render_zones(
     worker_statuses: list[dict],
     zones: list[dict],
     zone_rules: list[dict],
+    access_context: dict,
     create_zone_fn,
     update_zone_fn,
     set_zone_active_fn,
@@ -33,6 +34,9 @@ def render_zones(
     update_zone_rule_fn,
     set_zone_rule_active_fn,
 ):
+    can_manage = access_context.get("role") == "admin"
+    if not can_manage:
+        st.info("Управление зонами и правилами доступно только администратору. Экран открыт в режиме просмотра.")
     st.subheader("Камеры и контролируемые зоны")
     production_sources = [source for source in video_sources if source.get("source_type") != "browser_camera"]
     if not production_sources:
@@ -115,18 +119,21 @@ def render_zones(
                     is_active = st.checkbox("Активировать сразу", value=True)
                     submitted = st.form_submit_button("Создать зону")
                 if submitted:
-                    create_zone_fn(
-                        source_id=selected_source["id"],
-                        name=name,
-                        zone_type=zone_type,
-                        x=float(x),
-                        y=float(y),
-                        w=float(w),
-                        h=float(h),
-                        is_active=is_active,
-                        description=description,
-                    )
-                    st.success("Зона контроля добавлена.")
+                    if not can_manage:
+                        st.error("Недостаточно прав для добавления зоны.")
+                    else:
+                        create_zone_fn(
+                            source_id=selected_source["id"],
+                            name=name,
+                            zone_type=zone_type,
+                            x=float(x),
+                            y=float(y),
+                            w=float(w),
+                            h=float(h),
+                            is_active=is_active,
+                            description=description,
+                        )
+                        st.success("Зона контроля добавлена.")
                     st.rerun()
 
         with right_col:
@@ -135,6 +142,7 @@ def render_zones(
                 source_labels=source_labels,
                 statuses_by_source=statuses_by_source,
                 zones=zones,
+                can_manage=can_manage,
                 update_zone_fn=update_zone_fn,
                 set_zone_active_fn=set_zone_active_fn,
             )
@@ -178,17 +186,20 @@ def render_zones(
                         is_active = st.checkbox("Активировать сразу", value=True)
                         submitted = st.form_submit_button("Создать правило")
                     if submitted:
-                        create_zone_rule_fn(
-                            zone_id=selected_zone["id"],
-                            rule_type=rule_type,
-                            threshold_seconds=int(threshold_seconds),
-                            threshold_count=int(threshold_count),
-                            cooldown_seconds=int(cooldown_seconds),
-                            is_active=is_active,
-                            severity=severity,
-                            description=description,
-                        )
-                        st.success("Правило зоны добавлено.")
+                        if not can_manage:
+                            st.error("Недостаточно прав для добавления правила.")
+                        else:
+                            create_zone_rule_fn(
+                                zone_id=selected_zone["id"],
+                                rule_type=rule_type,
+                                threshold_seconds=int(threshold_seconds),
+                                threshold_count=int(threshold_count),
+                                cooldown_seconds=int(cooldown_seconds),
+                                is_active=is_active,
+                                severity=severity,
+                                description=description,
+                            )
+                            st.success("Правило зоны добавлено.")
                         st.rerun()
 
         with right_col:
@@ -253,32 +264,41 @@ def render_zones(
                         description = st.text_area("Описание", value=selected_rule.get("description") or "")
                         save = st.form_submit_button("Сохранить изменения")
                     if save:
-                        update_zone_rule_fn(
-                            rule_id=selected_rule["id"],
-                            zone_id=zone_options[zone_label]["id"],
-                            rule_type=rule_type,
-                            threshold_seconds=int(threshold_seconds),
-                            threshold_count=int(threshold_count),
-                            cooldown_seconds=int(cooldown_seconds),
-                            severity=severity,
-                            description=description,
-                        )
-                        st.success("Правило обновлено.")
+                        if not can_manage:
+                            st.error("Недостаточно прав для обновления правила.")
+                        else:
+                            update_zone_rule_fn(
+                                rule_id=selected_rule["id"],
+                                zone_id=zone_options[zone_label]["id"],
+                                rule_type=rule_type,
+                                threshold_seconds=int(threshold_seconds),
+                                threshold_count=int(threshold_count),
+                                cooldown_seconds=int(cooldown_seconds),
+                                severity=severity,
+                                description=description,
+                            )
+                            st.success("Правило обновлено.")
                         st.rerun()
                     action_col1, action_col2 = st.columns(2)
                     with action_col1:
                         if st.button("Активировать правило", key=f"activate_zone_rule_{selected_rule['id']}"):
-                            set_zone_rule_active_fn(rule_id=selected_rule["id"], is_active=True)
-                            st.success("Правило активировано.")
+                            if not can_manage:
+                                st.error("Недостаточно прав для изменения правила.")
+                            else:
+                                set_zone_rule_active_fn(rule_id=selected_rule["id"], is_active=True)
+                                st.success("Правило активировано.")
                             st.rerun()
                     with action_col2:
                         if st.button("Деактивировать правило", key=f"deactivate_zone_rule_{selected_rule['id']}"):
-                            set_zone_rule_active_fn(rule_id=selected_rule["id"], is_active=False)
-                            st.warning("Правило деактивировано.")
+                            if not can_manage:
+                                st.error("Недостаточно прав для изменения правила.")
+                            else:
+                                set_zone_rule_active_fn(rule_id=selected_rule["id"], is_active=False)
+                                st.warning("Правило деактивировано.")
                             st.rerun()
 
 
-def _render_zone_preview_and_editor(st, *, source_labels, statuses_by_source, zones, update_zone_fn, set_zone_active_fn):
+def _render_zone_preview_and_editor(st, *, source_labels, statuses_by_source, zones, can_manage: bool, update_zone_fn, set_zone_active_fn):
         with st.container(border=True):
             st.markdown("### Камера и snapshot")
             preview_source_label = st.selectbox("Источник для preview", options=list(source_labels.keys()), key="zones_preview_source")
@@ -338,30 +358,39 @@ def _render_zone_preview_and_editor(st, *, source_labels, statuses_by_source, zo
                     description = st.text_area("Описание", value=selected_zone.get("description") or "")
                     save = st.form_submit_button("Сохранить изменения")
                 if save:
-                    update_zone_fn(
-                        zone_id=selected_zone["id"],
-                        source_id=preview_source["id"],
-                        name=name,
-                        zone_type=zone_type,
-                        x=float(x),
-                        y=float(y),
-                        w=float(w),
-                        h=float(h),
-                        description=description,
-                    )
-                    st.success("Зона обновлена.")
+                    if not can_manage:
+                        st.error("Недостаточно прав для обновления зоны.")
+                    else:
+                        update_zone_fn(
+                            zone_id=selected_zone["id"],
+                            source_id=preview_source["id"],
+                            name=name,
+                            zone_type=zone_type,
+                            x=float(x),
+                            y=float(y),
+                            w=float(w),
+                            h=float(h),
+                            description=description,
+                        )
+                        st.success("Зона обновлена.")
                     st.rerun()
 
                 action_col1, action_col2 = st.columns(2)
                 with action_col1:
                     if st.button("Активировать зону", key=f"activate_zone_{selected_zone['id']}"):
-                        set_zone_active_fn(zone_id=selected_zone["id"], is_active=True)
-                        st.success("Зона активирована.")
+                        if not can_manage:
+                            st.error("Недостаточно прав для изменения зоны.")
+                        else:
+                            set_zone_active_fn(zone_id=selected_zone["id"], is_active=True)
+                            st.success("Зона активирована.")
                         st.rerun()
                 with action_col2:
                     if st.button("Деактивировать зону", key=f"deactivate_zone_{selected_zone['id']}"):
-                        set_zone_active_fn(zone_id=selected_zone["id"], is_active=False)
-                        st.warning("Зона деактивирована.")
+                        if not can_manage:
+                            st.error("Недостаточно прав для изменения зоны.")
+                        else:
+                            set_zone_active_fn(zone_id=selected_zone["id"], is_active=False)
+                            st.warning("Зона деактивирована.")
                         st.rerun()
 
 

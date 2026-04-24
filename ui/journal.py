@@ -40,9 +40,12 @@ def render_event_journal(
     *,
     incidents: list[dict],
     employees: list[dict],
+    access_context: dict,
     link_event_to_employee_fn,
     update_incident_status_fn,
 ):
+    can_update = access_context.get("role") in {"admin", "operator"}
+    can_link = access_context.get("role") in {"admin", "operator"}
     st.subheader("Журнал инцидентов")
     if not incidents:
         st.dataframe(
@@ -163,12 +166,15 @@ def render_event_journal(
                 placeholder="Например: подтверждено по регламенту охраны, направлен запрос на проверку или признано ложным срабатыванием.",
             )
             if st.button("Сохранить статус инцидента", key=f"incident_status_submit_{selected_id}", width="stretch"):
-                update_incident_status_fn(
-                    incident_id=selected_id,
-                    status=status,
-                    operator_comment=operator_comment,
-                )
-                st.success("Статус инцидента обновлен.")
+                if not can_update:
+                    st.error("Недостаточно прав для изменения статуса инцидента.")
+                else:
+                    update_incident_status_fn(
+                        incident_id=selected_id,
+                        status=status,
+                        operator_comment=operator_comment,
+                    )
+                    st.success("Статус инцидента обновлен.")
                 st.rerun()
 
         with st.container(border=True):
@@ -201,17 +207,20 @@ def render_event_journal(
                     placeholder="Например: подтвержден оператором смены или сопоставлен с внешним контуром доступа.",
                 )
                 if st.button("Связать событие-основание с карточкой сотрудника", key=f"incident_link_submit_{selected_id}", width="stretch"):
-                    try:
-                        link_event_to_employee_fn(
-                            event_id=selected_incident["event_id"],
-                            employee_id=employee_options[selected_employee_label],
-                            identification_status=link_status,
-                            note=link_note,
-                        )
-                    except ValueError as exc:
-                        st.error(str(exc))
+                    if not can_link:
+                        st.error("Недостаточно прав для ручной привязки контекста инцидента.")
                     else:
-                        st.success("Контекст инцидента обновлен через базовое событие.")
+                        try:
+                            link_event_to_employee_fn(
+                                event_id=selected_incident["event_id"],
+                                employee_id=employee_options[selected_employee_label],
+                                identification_status=link_status,
+                                note=link_note,
+                            )
+                        except ValueError as exc:
+                            st.error(str(exc))
+                        else:
+                            st.success("Контекст инцидента обновлен через базовое событие.")
                         st.rerun()
     with image_col:
         with st.container(border=True):
