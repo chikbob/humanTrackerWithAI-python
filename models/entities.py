@@ -57,6 +57,24 @@ class ZoneRule:
 
 
 @dataclass
+class Incident:
+    id: Optional[int]
+    event_id: str
+    source_id: Optional[int]
+    zone_name: str
+    incident_type: str
+    severity: str
+    status: str
+    confidence: float
+    snapshot_path: str
+    operator_comment: str
+    employee_id: Optional[int]
+    identification_status: str
+    started_at: float
+    updated_at: float
+
+
+@dataclass
 class SystemSetting:
     key: str
     value: str

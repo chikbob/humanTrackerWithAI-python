@@ -28,13 +28,16 @@ from db.repository import (
     load_worker_statuses,
     load_zones,
     load_zone_rules,
+    load_incidents,
     replace_employee_cache,
     reset_and_seed_demo_data,
     set_system_setting,
     set_video_source_active,
     set_zone_active,
     set_zone_rule_active,
+    update_incident_status,
     link_event_to_employee,
+    upsert_incident,
     upsert_employee_sync_state,
     update_employee,
     update_employee_status,
@@ -45,6 +48,7 @@ from db.repository import (
 from services.employee_repository import build_employee_repository
 from services.employee_sync import maybe_sync_employee_directory
 from services.identity_service import build_identity_runtime_state
+from services.incidents import sync_incidents_from_events
 from services.source_service import test_video_source_connection
 from services.state import init_session_state
 from ui.analytics_views import render_access_analytics
@@ -151,6 +155,8 @@ def main():
     zone_rules = load_zone_rules()
     raw_events = load_events(limit=5000)
     events = enrich_event_rows(raw_events, video_sources, worker_statuses)
+    sync_incidents_from_events(events, upsert_incident_fn=upsert_incident)
+    incidents = load_incidents(limit=5000)
 
     if not standalone_live_mode:
         with st.container():
@@ -224,9 +230,10 @@ def main():
     elif section == "Журнал инцидентов":
         render_event_journal(
             st,
-            events=events,
+            incidents=incidents,
             employees=employees,
             link_event_to_employee_fn=link_event_to_employee,
+            update_incident_status_fn=update_incident_status,
         )
     elif section == "Аналитика и отчеты":
         render_access_analytics(st, events=events, worker_statuses=worker_statuses)

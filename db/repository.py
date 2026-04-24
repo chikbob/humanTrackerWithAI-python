@@ -131,6 +131,14 @@ def _zone_rule_select_columns() -> str:
     """
 
 
+def _incident_select_columns() -> str:
+    return """
+        id, event_id, source_id, zone_name, incident_type, severity, status, confidence,
+        snapshot_path, operator_comment, employee_id, identification_status, started_at, updated_at,
+        source_name
+    """
+
+
 def normalize_zone_config(zone: dict | None = None) -> dict:
     zone = zone or {}
     normalized = {
@@ -180,6 +188,32 @@ def _normalize_zone_rule_row(row: dict | sqlite3.Row) -> dict:
     if rule.get("source_id") is not None:
         rule["source_id"] = int(rule["source_id"])
     return rule
+
+
+def normalize_incident_config(incident: dict | None = None) -> dict:
+    incident = incident or {}
+    normalized = {
+        "severity": (incident.get("severity") or "medium").strip() or "medium",
+        "status": (incident.get("status") or "new").strip() or "new",
+        "confidence": float(incident.get("confidence") or 0.0),
+        "snapshot_path": (incident.get("snapshot_path") or "").strip(),
+        "operator_comment": (incident.get("operator_comment") or "").strip(),
+        "zone_name": (incident.get("zone_name") or "не задана").strip() or "не задана",
+        "incident_type": (incident.get("incident_type") or "unknown").strip() or "unknown",
+        "identification_status": normalize_identification_status(incident.get("identification_status")),
+    }
+    return normalized
+
+
+def _normalize_incident_row(row: dict | sqlite3.Row) -> dict:
+    incident = dict(row)
+    incident.update(normalize_incident_config(incident))
+    incident["id"] = int(incident["id"])
+    if incident.get("source_id") is not None:
+        incident["source_id"] = int(incident["source_id"])
+    if incident.get("employee_id") is not None:
+        incident["employee_id"] = int(incident["employee_id"])
+    return incident
 
 
 def _normalize_video_source_row(row: dict | sqlite3.Row) -> dict:
@@ -449,6 +483,28 @@ def init_db():
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS incidents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT UNIQUE,
+            source_id INTEGER NULL,
+            zone_name TEXT,
+            incident_type TEXT NOT NULL,
+            severity TEXT DEFAULT 'medium',
+            status TEXT DEFAULT 'new',
+            confidence REAL DEFAULT 0.0,
+            snapshot_path TEXT,
+            operator_comment TEXT,
+            employee_id INTEGER NULL,
+            identification_status TEXT DEFAULT 'unlinked',
+            started_at REAL,
+            updated_at REAL,
+            FOREIGN KEY (source_id) REFERENCES video_sources(id),
+            FOREIGN KEY (employee_id) REFERENCES employees(id)
+        )
+        """
+    )
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS benchmark_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             run_id INTEGER NOT NULL,
@@ -563,6 +619,25 @@ def init_db():
             ("severity", "severity TEXT DEFAULT 'medium'"),
             ("description", "description TEXT"),
             ("created_at", "created_at REAL"),
+        ],
+    )
+    _ensure_columns(
+        conn,
+        "incidents",
+        [
+            ("event_id", "event_id TEXT"),
+            ("source_id", "source_id INTEGER"),
+            ("zone_name", "zone_name TEXT"),
+            ("incident_type", "incident_type TEXT NOT NULL DEFAULT 'unknown'"),
+            ("severity", "severity TEXT DEFAULT 'medium'"),
+            ("status", "status TEXT DEFAULT 'new'"),
+            ("confidence", "confidence REAL DEFAULT 0.0"),
+            ("snapshot_path", "snapshot_path TEXT"),
+            ("operator_comment", "operator_comment TEXT"),
+            ("employee_id", "employee_id INTEGER"),
+            ("identification_status", "identification_status TEXT DEFAULT 'unlinked'"),
+            ("started_at", "started_at REAL"),
+            ("updated_at", "updated_at REAL"),
         ],
     )
     _ensure_columns(
@@ -1408,6 +1483,36 @@ def load_zone_rules(*, source_id: int | None = None, zone_id: int | None = None)
     return [_normalize_zone_rule_row(row) for row in rows]
 
 
+def load_incidents(*, limit: int | None = None):
+    conn = get_db_conn()
+    sql = f"""
+        SELECT
+            incidents.id,
+            incidents.event_id,
+            incidents.source_id,
+            incidents.zone_name,
+            incidents.incident_type,
+            incidents.severity,
+            incidents.status,
+            incidents.confidence,
+            incidents.snapshot_path,
+            incidents.operator_comment,
+            incidents.employee_id,
+            incidents.identification_status,
+            incidents.started_at,
+            incidents.updated_at,
+            video_sources.name AS source_name
+        FROM incidents
+        LEFT JOIN video_sources ON video_sources.id = incidents.source_id
+        ORDER BY incidents.started_at DESC, incidents.id DESC
+    """
+    if limit is not None:
+        sql += f" LIMIT {int(limit)}"
+    rows = conn.execute(sql).fetchall()
+    conn.close()
+    return [_normalize_incident_row(row) for row in rows]
+
+
 def replace_employee_cache(employees: list[dict], *, source_system: str, synced_at=None):
     conn = get_db_conn()
     synced_at = synced_at or time.time()
@@ -1676,6 +1781,93 @@ def create_zone_rule(
     conn.close()
 
 
+def upsert_incident(
+    *,
+    event_id: str,
+    source_id: int | None,
+    zone_name: str,
+    incident_type: str,
+    severity: str,
+    status: str = "new",
+    confidence: float = 0.0,
+    snapshot_path: str = "",
+    operator_comment: str = "",
+    employee_id: int | None = None,
+    identification_status: str = "unlinked",
+    started_at: float | None = None,
+):
+    config = normalize_incident_config(
+        {
+            "zone_name": zone_name,
+            "incident_type": incident_type,
+            "severity": severity,
+            "status": status,
+            "confidence": confidence,
+            "snapshot_path": snapshot_path,
+            "operator_comment": operator_comment,
+            "identification_status": identification_status,
+        }
+    )
+    now_ts = time.time()
+    started_at = float(started_at if started_at is not None else now_ts)
+    conn = get_db_conn()
+    existing = conn.execute(
+        "SELECT id, status, operator_comment FROM incidents WHERE event_id = ?",
+        (event_id,),
+    ).fetchone()
+    if existing is None:
+        conn.execute(
+            """
+            INSERT INTO incidents (
+                event_id, source_id, zone_name, incident_type, severity, status, confidence,
+                snapshot_path, operator_comment, employee_id, identification_status, started_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                source_id,
+                config["zone_name"],
+                config["incident_type"],
+                config["severity"],
+                config["status"],
+                config["confidence"],
+                config["snapshot_path"],
+                config["operator_comment"],
+                employee_id,
+                config["identification_status"],
+                started_at,
+                now_ts,
+            ),
+        )
+    else:
+        preserved_status = existing["status"] or config["status"]
+        preserved_comment = existing["operator_comment"] or config["operator_comment"]
+        conn.execute(
+            """
+            UPDATE incidents
+            SET source_id = ?, zone_name = ?, incident_type = ?, severity = ?, status = ?, confidence = ?,
+                snapshot_path = ?, operator_comment = ?, employee_id = ?, identification_status = ?, updated_at = ?
+            WHERE event_id = ?
+            """,
+            (
+                source_id,
+                config["zone_name"],
+                config["incident_type"],
+                config["severity"],
+                preserved_status,
+                config["confidence"],
+                config["snapshot_path"],
+                preserved_comment,
+                employee_id,
+                config["identification_status"],
+                now_ts,
+                event_id,
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+
 def update_video_source(
     *,
     source_id: int,
@@ -1831,6 +2023,29 @@ def update_zone_rule(
             int(rule_id),
         ),
     )
+    conn.commit()
+    conn.close()
+
+
+def update_incident_status(
+    *,
+    incident_id: int,
+    status: str,
+    operator_comment: str | None = None,
+):
+    normalized_status = (status or "new").strip() or "new"
+    now_ts = time.time()
+    conn = get_db_conn()
+    if operator_comment is None:
+        conn.execute(
+            "UPDATE incidents SET status = ?, updated_at = ? WHERE id = ?",
+            (normalized_status, now_ts, int(incident_id)),
+        )
+    else:
+        conn.execute(
+            "UPDATE incidents SET status = ?, operator_comment = ?, updated_at = ? WHERE id = ?",
+            (normalized_status, operator_comment.strip(), now_ts, int(incident_id)),
+        )
     conn.commit()
     conn.close()
 
