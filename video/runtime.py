@@ -6,6 +6,8 @@ import os
 import time
 import uuid
 
+import cv2
+
 
 RUNTIME_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "runtime_data")
 SNAPSHOT_DIR = os.path.join(RUNTIME_DIR, "snapshots")
@@ -47,3 +49,13 @@ def create_runtime_session(source: dict, model_name: str) -> dict:
 def build_snapshot_path(source_id: int) -> str:
     ensure_runtime_dirs()
     return os.path.join(SNAPSHOT_DIR, f"source_{source_id}_latest.jpg")
+
+
+def write_snapshot_atomic(source_id: int, frame_bgr) -> str:
+    ensure_runtime_dirs()
+    snapshot_path = build_snapshot_path(source_id)
+    temp_path = f"{snapshot_path}.tmp"
+    if not cv2.imwrite(temp_path, frame_bgr):
+        raise RuntimeError(f"Не удалось сохранить snapshot для source_id={source_id}")
+    os.replace(temp_path, snapshot_path)
+    return snapshot_path

@@ -19,7 +19,7 @@ from db.repository import (
 from services.events import create_domain_entry_event
 from video.ingest import SourceIngestSession
 from video.pipeline import load_worker_model, process_source_frame
-from video.runtime import build_snapshot_path, create_runtime_session, ensure_runtime_dirs
+from video.runtime import create_runtime_session, ensure_runtime_dirs, write_snapshot_atomic
 
 
 class SourceWorker:
@@ -186,8 +186,7 @@ class SourceWorker:
             event_settings=event_settings,
             tracker_type=settings["tracker_type"],
         )
-        snapshot_path = build_snapshot_path(source_id)
-        cv2.imwrite(snapshot_path, cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))
+        snapshot_path = write_snapshot_atomic(source_id, cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))
         now_ts = time.time()
         update_video_source_last_seen(source_id=source_id, last_seen=now_ts)
         fps = 1000.0 / processing_time_ms if processing_time_ms > 0 else 0.0
