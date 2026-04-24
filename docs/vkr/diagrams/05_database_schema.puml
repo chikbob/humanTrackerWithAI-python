@@ -1,0 +1,120 @@
+@startuml
+title Физическая схема базы данных системы мониторинга
+
+entity "employees" as employees {
+  * id : integer
+  --
+  full_name
+  employee_number
+  department
+  position
+  status
+  source_system
+}
+
+entity "access_points" as access_points {
+  * id : integer
+  --
+  name
+  location
+  description
+}
+
+entity "video_sources" as video_sources {
+  * id : integer
+  --
+  name
+  source_type
+  source_url
+  location
+  is_active
+}
+
+entity "worker_status" as worker_status {
+  * source_id : integer
+  --
+  status
+  is_connected
+  last_heartbeat
+  last_frame_at
+  fps
+  last_error
+  last_snapshot_path
+}
+
+entity "system_settings" as system_settings {
+  * key : text
+  --
+  value
+  updated_at
+}
+
+entity "sessions" as sessions {
+  * id : text
+  --
+  model
+  source_type
+  source_path
+  started_at
+  finished_at
+}
+
+entity "frames" as frames {
+  * id : integer
+  --
+  session_id
+  frame_index
+  timestamp
+  width
+  height
+  detections_count
+}
+
+entity "events" as events {
+  * event_id : text
+  --
+  session_id
+  event_type
+  event_scope
+  timestamp
+  track_id
+  access_log_id
+  employee_id
+  access_point_id
+}
+
+entity "detection_events" as detection_events {
+  * id : text
+  --
+  session_id
+  event_type
+  timestamp
+  track_id
+  class_name
+  confidence
+  roi_state
+}
+
+entity "access_logs" as access_logs {
+  * id : integer
+  --
+  employee_id
+  access_point_id
+  event_type
+  timestamp
+  confidence
+  source_id
+}
+
+video_sources ||--o| worker_status
+sessions ||--o{ frames
+sessions ||--o{ events
+sessions ||--o{ detection_events
+employees ||--o{ access_logs
+employees ||--o{ events
+access_points ||--o{ access_logs
+access_points ||--o{ events
+video_sources ||--o{ access_logs
+access_logs ||--o{ events
+
+@enduml

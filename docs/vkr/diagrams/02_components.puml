@@ -1,0 +1,69 @@
+@startuml
+title Компонентная структура веб-системы мониторинга
+
+package "UI / Предметные модули" {
+  [Dashboard]
+  [Online Monitoring]
+  [Employees]
+  [Event Journal]
+  [Video Sources]
+  [Settings]
+}
+
+package "Аналитические модули" {
+  [Analytics Views]
+  [Access Analytics]
+}
+
+package "Инфраструктурные модули" {
+  [Worker]
+  [Event Generation]
+  [EmployeeRepository]
+  [Database Layer]
+  [Worker Status & Snapshots]
+  [Config]
+  [Models]
+}
+
+package "Демонстрационный контур" {
+  [Browser Live]
+  [Local Camera]
+  [File Monitoring]
+  [Live Window]
+}
+
+[Dashboard] --> [Access Analytics]
+[Online Monitoring] --> [Event Generation]
+[Online Monitoring] --> [Database Layer]
+[Online Monitoring] --> [Live Window]
+[Employees] --> [EmployeeRepository]
+[Event Journal] --> [Database Layer]
+[Event Journal] --> [EmployeeRepository]
+[Video Sources] --> [Database Layer]
+[Settings] --> [Config]
+[Settings] --> [Database Layer]
+[Analytics Views] --> [Access Analytics]
+[Access Analytics] --> [Database Layer]
+
+[Worker] --> [Event Generation]
+[Worker] --> [Database Layer]
+[Worker] --> [Worker Status & Snapshots]
+[Worker] --> [Config]
+
+[EmployeeRepository] --> [Database Layer]
+[Models] --> [Database Layer]
+
+[Browser Live] --> [Online Monitoring]
+[Local Camera] --> [Online Monitoring]
+[File Monitoring] --> [Online Monitoring]
+[Live Window] --> [Online Monitoring]
+
+note right of [Worker]
+Production path
+end note
+
+note bottom of [Browser Live]
+Demo/fallback path
+end note
+
+@enduml

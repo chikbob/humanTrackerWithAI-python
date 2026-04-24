@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import streamlit as st
 
 from analytics.access import enrich_event_rows
@@ -45,6 +47,11 @@ from ui.page import configure_page
 from ui.settings import render_system_settings
 from ui.sidebar import ANIMAL_CLASSES, render_app_sidebar
 from ui.sources import render_video_sources
+
+
+# WebRTC worker threads emit a harmless Streamlit context warning on every frame.
+# Lower this logger to keep the demo console readable without affecting behavior.
+logging.getLogger("streamlit.runtime.scriptrunner_utils.script_run_context").setLevel(logging.ERROR)
 
 
 def main():
@@ -94,7 +101,15 @@ def main():
             "model_name": system_settings.get("model_name", "yolov8s.pt"),
         }
     else:
-        sidebar_state = render_app_sidebar(st, video_sources=video_sources, system_settings=system_settings)
+        monitored_source_count = len(st.session_state.get("monitoring_selected_labels") or []) or int(
+            st.session_state.get("monitoring_selected_count") or 0
+        )
+        sidebar_state = render_app_sidebar(
+            st,
+            video_sources=video_sources,
+            system_settings=system_settings,
+            monitored_source_count=monitored_source_count,
+        )
         ensure_demo_employees()
 
     access_points = load_access_points()
@@ -125,7 +140,11 @@ def main():
             status_col1, status_col2, status_col3, status_col4 = st.columns([1.0, 1.0, 1.2, 0.8])
             status_col1.metric("Раздел", sidebar_state["section"])
             status_col2.metric("Фоновый worker", "online" if any(status.get("is_connected") for status in worker_statuses) else "standby")
-            status_col3.metric("Production-источники", sum(1 for source in video_sources if source.get("is_active")))
+            status_col3.metric(
+                "Источники в мониторинге",
+                len(st.session_state.get("monitoring_selected_labels") or [])
+                or int(st.session_state.get("monitoring_selected_count") or sum(1 for source in video_sources if source.get("is_active"))),
+            )
             if status_col4.button("Обновить данные"):
                 st.rerun()
 

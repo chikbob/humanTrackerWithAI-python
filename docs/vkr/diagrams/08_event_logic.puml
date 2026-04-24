@@ -1,0 +1,45 @@
+@startuml
+title Схема событийной логики проходной зоны
+
+start
+:Поток кадров;
+:Детекция человека;
+:Трекинг объекта;
+:Проверка ROI;
+
+if (Источник недоступен?) then (да)
+  :stream_offline;
+  :Журнал событий;
+  :camera_reconnected;
+  :Журнал событий;
+else (нет)
+  if (Объект рядом со входом?) then (да)
+    :person_detected_near_entry;
+    :Журнал событий;
+  endif
+  if (Вход в ROI?) then (да)
+    :person_entered_entry_zone;
+    :Журнал событий;
+  endif
+  if (Выход из ROI или потеря трека?) then (да)
+    :person_left_entry_zone;
+    :Журнал событий;
+  endif
+  if (Длительное присутствие?) then (да)
+    :prolonged_presence_near_entry;
+    :Журнал событий;
+  endif
+  if (Повторный вход?) then (да)
+    :repeated_entry_attempt;
+    :Журнал событий;
+  endif
+  if (Личность не установлена?) then (да)
+    :unknown_person_detected;
+    :Журнал событий;
+  endif
+endif
+
+:Аналитика;
+stop
+
+@enduml

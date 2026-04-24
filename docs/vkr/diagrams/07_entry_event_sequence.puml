@@ -1,0 +1,23 @@
+@startuml
+title Последовательность обработки события входа в контролируемую зону
+
+actor "Источник видео" as Source
+participant "Worker / Online Monitoring" as Monitor
+participant "YOLOv8 + Tracking" as Yolo
+participant "ROI Logic" as ROI
+participant "Event Service" as Events
+database "SQLite" as DB
+participant "UI" as UI
+
+Source -> Monitor : передает очередной кадр
+Monitor -> Yolo : запуск детекции и трекинга
+Yolo --> Monitor : detections + track_id
+Monitor -> ROI : проверка попадания в ROI
+ROI --> Monitor : roi_inside / roi_enter / roi_exit
+Monitor -> Events : интерпретация доменного события
+Events -> DB : запись raw event
+Events -> DB : запись domain event\nperson_entered_entry_zone
+DB --> UI : событие доступно журналу и аналитике
+UI --> UI : обновление статусов,\nжурнала и мониторинга
+
+@enduml

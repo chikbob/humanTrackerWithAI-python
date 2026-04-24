@@ -1,0 +1,83 @@
+@startuml
+title Логическая модель предметной области системы мониторинга проходной зоны
+
+class "Сотрудник" as Employee {
+  id
+  ФИО
+  Табельный номер
+  Подразделение
+  Должность
+  Статус
+}
+
+class "Источник видео" as VideoSource {
+  id
+  Наименование
+  Тип источника
+  Адрес/URL
+  Активность
+  Локация
+}
+
+class "Точка доступа" as AccessPoint {
+  id
+  Наименование
+  Локация
+  Описание
+}
+
+class "Сессия наблюдения" as Session {
+  id
+  Модель
+  Источник
+  Время начала
+  Время завершения
+}
+
+class "Кадр / Snapshot" as Frame {
+  id
+  Время
+  Размер
+  Индекс кадра
+}
+
+class "Сырое событие детекции" as DetectionEvent {
+  id
+  Тип события
+  Класс объекта
+  Confidence
+  Track ID
+  ROI-флаг
+}
+
+class "Событие проходной" as AccessEvent {
+  id
+  Тип события
+  Время
+  Описание
+}
+
+class "Системная настройка" as SystemSetting {
+  key
+  value
+}
+
+class "Статус worker" as WorkerStatus {
+  source_id
+  Статус
+  Heartbeat
+  FPS
+  Ошибка
+}
+
+VideoSource "1" --> "0..*" Session
+Session "1" --> "0..*" Frame
+Frame "1" --> "0..*" DetectionEvent
+DetectionEvent "0..*" --> "0..1" AccessEvent
+AccessEvent "0..*" --> "1" AccessPoint
+AccessEvent "0..*" --> "0..1" Employee
+VideoSource "1" --> "0..1" WorkerStatus
+SystemSetting .. VideoSource
+SystemSetting .. Session
+
+@enduml

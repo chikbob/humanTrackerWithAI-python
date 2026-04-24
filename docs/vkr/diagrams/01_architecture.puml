@@ -1,0 +1,86 @@
+@startuml
+title Архитектурная схема веб-системы мониторинга проходной зоны
+
+actor "Оператор" as Operator
+
+node "Web UI" {
+  component "app.py\nStreamlit entrypoint" as App
+  package "ui/" {
+    [Dashboard]
+    [Online Monitoring]
+    [Journal]
+    [Analytics Views]
+    [Employees]
+    [Sources]
+    [Settings]
+  }
+}
+
+node "Background Processing" {
+  component "run_worker.py" as RunWorker
+  component "video/worker.py" as Worker
+  component "video/pipeline.py" as Pipeline
+  package "core/" {
+    [Detection & Tracking]
+  }
+  package "services/" {
+    [Events]
+    [State]
+    [EmployeeRepository]
+    [Employee Sync]
+    [Identity Placeholder]
+  }
+}
+
+database "SQLite\nmonitoring.db" as DB
+folder "runtime_data/\nsnapshots" as Runtime
+
+package "analytics/" {
+  [Access Analytics]
+}
+
+package "config/" {
+  [App Config]
+  [RTC Config]
+}
+
+package "models/" {
+  [Entities]
+}
+
+cloud "Production video sources\nRTSP / HLS / USB" as ProdSources
+cloud "Demo/Fallback sources\nBrowser / Local / Files" as DemoSources
+
+Operator --> App
+App --> Dashboard
+App --> "Online Monitoring"
+App --> Journal
+App --> "Analytics Views"
+App --> Employees
+App --> Sources
+App --> Settings
+
+ProdSources --> Worker
+RunWorker --> Worker
+Worker --> Pipeline
+Pipeline --> "Detection & Tracking"
+Pipeline --> Events
+Worker --> State
+Worker --> DB
+Worker --> Runtime
+Worker --> "App Config"
+
+DemoSources --> "Online Monitoring"
+"Online Monitoring" --> "Detection & Tracking"
+"Online Monitoring" --> Events
+"Online Monitoring" --> State
+"Online Monitoring" --> DB
+
+App --> DB
+App --> Runtime
+App --> "Access Analytics"
+App --> "EmployeeRepository"
+App --> "Employee Sync"
+App --> "RTC Config"
+App --> Entities
+@enduml

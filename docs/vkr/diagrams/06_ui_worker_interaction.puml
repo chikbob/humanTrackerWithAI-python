@@ -1,0 +1,64 @@
+@startuml
+title Взаимодействие Streamlit UI, worker и подсистем приложения
+
+actor "Пользователь" as User
+participant "app.py\nStreamlit UI" as App
+participant "ui/*" as UI
+participant "analytics/*" as Analytics
+participant "db/repository.py" as DB
+participant "run_worker.py" as RunWorker
+participant "video/worker.py" as Worker
+participant "video/pipeline.py\nvideo ingest" as Pipeline
+participant "core/*" as Core
+participant "services/events.py" as Events
+participant "runtime_data/\nsnapshots" as Runtime
+database "SQLite" as Sqlite
+
+User -> App : открывает web-интерфейс
+App -> DB : инициализация и чтение данных
+DB -> Sqlite : load settings / sources /\nworker_status / events / employees
+Sqlite --> DB
+DB --> App
+App -> Analytics : агрегация и обогащение данных
+Analytics --> App
+App -> UI : рендер экранов
+UI --> User : dashboard / monitoring /\njournal / analytics / employees
+
+RunWorker -> Worker : запуск фонового контура
+Worker -> DB : чтение активных sources и settings
+DB -> Sqlite : load active video_sources,\nsystem_settings
+Sqlite --> DB
+DB --> Worker
+
+loop по активным production-источникам
+  Worker -> Pipeline : обработка кадра
+  Pipeline -> Core : detection / tracking / ROI
+  Core --> Pipeline : detections
+  Pipeline -> Events : генерация raw и domain events
+  Events -> DB : запись событий
+  DB -> Sqlite : insert events /\ndetection_events / access_logs
+  Sqlite --> DB
+  Worker -> Runtime : сохранение snapshot
+  Worker -> DB : update worker_status,\nupdate last_seen
+  DB -> Sqlite
+end
+
+App -> Runtime : чтение snapshots
+Runtime --> App
+App -> DB : повторное чтение событий,\nworker_status, employees
+DB -> Sqlite
+Sqlite --> DB
+DB --> App
+App -> UI : обновление представлений
+
+note right of Worker
+Фоновый контур работает
+независимо от UI-сессии
+end note
+
+note left of App
+Интерфейс использует уже
+сохраненные данные и состояния
+end note
+
+@enduml

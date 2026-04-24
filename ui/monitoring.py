@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import sys
 import tempfile
@@ -48,6 +49,22 @@ LOCAL_CAMERA_RESOLUTIONS = {
     "480p": (640, 480),
     "720p": (1280, 720),
     "1080p": (1920, 1080),
+}
+SOURCE_KIND_LABELS = {
+    "production": "Production source",
+    "browser_camera": "Browser live",
+    "local_camera": "Local camera",
+    "rtsp": "RTSP/IP",
+    "stream_url": "HLS/HTTP",
+    "usb_camera": "USB camera",
+}
+STATUS_LABELS = {
+    "online": "online",
+    "offline": "offline",
+    "reconnecting": "reconnecting",
+    "live": "live",
+    "ready": "ready",
+    "standby": "standby",
 }
 
 
@@ -165,6 +182,43 @@ def _resolve_source_name(binding: dict, selected_source) -> str:
     return "Браузерная камера"
 
 
+def _format_source_kind_label(kind_label: str) -> str:
+    return SOURCE_KIND_LABELS.get(kind_label, SOURCE_KIND_LABELS.get(str(kind_label), str(kind_label)))
+
+
+def _format_status_label(status: str) -> str:
+    return STATUS_LABELS.get(status or "", status or "unknown")
+
+
+def _status_chip_color(status: str) -> str:
+    palette = {
+        "online": "rgba(16,185,129,.18)",
+        "live": "rgba(16,185,129,.18)",
+        "ready": "rgba(59,130,246,.18)",
+        "reconnecting": "rgba(245,158,11,.18)",
+        "offline": "rgba(239,68,68,.18)",
+        "standby": "rgba(148,163,184,.18)",
+    }
+    return palette.get(status, "rgba(148,163,184,.18)")
+
+
+def _render_fullscreen_frame(frame_placeholder, frame_rgb):
+    ok, encoded = cv2.imencode(".jpg", cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR), [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+    if not ok:
+        frame_placeholder.image(frame_rgb, channels="RGB", width="stretch")
+        return
+    encoded_image = base64.b64encode(encoded.tobytes()).decode("ascii")
+    frame_placeholder.markdown(
+        f"""
+        <img
+            src="data:image/jpeg;base64,{encoded_image}"
+            style="position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;background:#000;z-index:1;"
+        />
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _get_request_host(st) -> str:
     context = getattr(st, "context", None)
     headers = getattr(context, "headers", None)
@@ -219,6 +273,154 @@ def render_online_monitoring(
     standalone_mode: bool = False,
     standalone_overlay_enabled: bool = True,
 ):
+    st.markdown(
+        """
+        <style>
+            .video-wall-shell {
+                margin-top: .15rem;
+            }
+            .video-wall-toolbar {
+                padding: .75rem .95rem;
+                border-radius: 16px;
+                background: linear-gradient(180deg, rgba(16,24,35,.96), rgba(11,18,28,.96));
+                border: 1px solid rgba(122, 144, 168, 0.14);
+                margin-bottom: .8rem;
+            }
+            .video-wall-note {
+                margin-top: .45rem;
+                font-size: .84rem;
+                color: #8fa6bc;
+            }
+            .video-link-row {
+                display: flex;
+                gap: .75rem;
+                flex-wrap: wrap;
+                margin-bottom: .55rem;
+            }
+            .video-link-row a {
+                display: inline-flex;
+                align-items: center;
+                padding: .42rem .72rem;
+                border-radius: 12px;
+                border: 1px solid rgba(88,166,255,.22);
+                background: rgba(17, 28, 40, .9);
+                color: #d7e8f8;
+                text-decoration: none;
+                font-size: .86rem;
+            }
+            .video-link-row a:hover {
+                border-color: rgba(88,166,255,.42);
+                color: #fff;
+            }
+            .ops-panel {
+                padding: .9rem;
+                border-radius: 18px;
+                background: linear-gradient(180deg, rgba(16,24,35,.98), rgba(11,18,28,.98));
+                border: 1px solid rgba(122, 144, 168, 0.16);
+            }
+            .ops-grid {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: .6rem;
+                margin-top: .7rem;
+            }
+            .ops-card {
+                padding: .72rem .75rem;
+                border-radius: 14px;
+                background: rgba(20, 31, 44, .82);
+                border: 1px solid rgba(122, 144, 168, 0.12);
+            }
+            .ops-label {
+                font-size: .72rem;
+                text-transform: uppercase;
+                letter-spacing: .08em;
+                color: #7f9bb5;
+            }
+            .ops-value {
+                margin-top: .3rem;
+                font-size: 1rem;
+                font-weight: 650;
+                color: #edf6ff;
+                line-height: 1.25;
+            }
+            .ops-alert {
+                margin-top: .7rem;
+                padding: .7rem .8rem;
+                border-radius: 14px;
+                background: rgba(127, 29, 29, .18);
+                border: 1px solid rgba(248, 113, 113, .24);
+                color: #fecaca;
+                font-size: .84rem;
+            }
+            .source-status-card {
+                border: 1px solid rgba(148,163,184,.14);
+                border-radius: 14px;
+                padding: .75rem .85rem;
+                margin-bottom: .55rem;
+                background: rgba(15,23,42,.3);
+            }
+            .source-status-meta {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: .45rem .8rem;
+                margin-top: .55rem;
+                font-size: .77rem;
+                color: #c6d4e2;
+            }
+            .source-status-chip {
+                padding: .26rem .55rem;
+                border-radius: 999px;
+                font-size: .74rem;
+                border: 1px solid rgba(255,255,255,.08);
+                color: #f8fbff;
+            }
+            .source-tile-shell {
+                padding: .65rem .7rem .8rem .7rem;
+                border-radius: 16px;
+                background: rgba(10, 18, 28, .68);
+            }
+            .source-tile-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: .65rem;
+                margin-bottom: .45rem;
+            }
+            .source-tile-title {
+                font-size: 1rem;
+                font-weight: 700;
+                color: #eef6ff;
+            }
+            .source-tile-subtitle {
+                margin-top: .12rem;
+                font-size: .72rem;
+                text-transform: uppercase;
+                letter-spacing: .08em;
+                color: #8ea4ba;
+            }
+            .source-meta-row {
+                display: flex;
+                gap: .45rem;
+                flex-wrap: wrap;
+                margin-bottom: .55rem;
+            }
+            .source-meta-pill {
+                padding: .22rem .5rem;
+                border-radius: 999px;
+                font-size: .73rem;
+                color: #d8e6f5;
+                background: rgba(17, 28, 40, .82);
+                border: 1px solid rgba(122, 144, 168, 0.14);
+            }
+            .compact-caption {
+                margin-top: .4rem;
+                font-size: .78rem;
+                color: #89a0b6;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     statuses_by_id = {status["source_id"]: status for status in worker_statuses}
     source_bindings = _build_source_bindings(active_sources, statuses_by_id)
     source_cards = {
@@ -240,15 +442,22 @@ def render_online_monitoring(
         selected_bindings = [standalone_binding] if standalone_binding else [source_bindings[0]]
     else:
         default_selection = _resolve_default_selection(source_bindings, preferred_source, preferred_source_id)
+        stored_selection = session_state.get("monitoring_selected_labels")
+        if stored_selection:
+            valid_stored = [label for label in stored_selection if label in selectable_labels]
+            if valid_stored:
+                default_selection = valid_stored
         selected_labels = st.multiselect(
             "Источники онлайн-мониторинга",
             options=selectable_labels,
             default=default_selection,
+            key="monitoring_selected_labels",
             help="Production-источники отображаются через snapshots worker. Browser/local режимы активируются как foreground live-source.",
         )
         if not selected_labels:
             selected_labels = default_selection
         selected_bindings = [binding for binding in source_bindings if binding["label"] in selected_labels]
+        session_state.monitoring_selected_labels = selected_labels
 
     layout_mode = "single"
     primary_binding = selected_bindings[0]
@@ -266,10 +475,14 @@ def render_online_monitoring(
                 }[value],
             )
         with control_col2:
+            primary_options = [binding["label"] for binding in selected_bindings]
+            if session_state.get("monitoring_primary_label") not in primary_options:
+                session_state.monitoring_primary_label = primary_options[0]
             primary_label = st.selectbox(
                 "Главный источник",
-                options=[binding["label"] for binding in selected_bindings],
-                index=0,
+                options=primary_options,
+                index=primary_options.index(session_state.monitoring_primary_label),
+                key="monitoring_primary_label",
             )
             primary_binding = next(binding for binding in selected_bindings if binding["label"] == primary_label)
         with control_col3:
@@ -286,6 +499,8 @@ def render_online_monitoring(
     selected_source = selected_binding["source"]
     selected_status = selected_binding["status"]
     selected_last_frame_at = _resolve_binding_last_frame_at(selected_binding, session_state)
+    session_state.monitoring_selected_count = len(selected_bindings)
+    session_state.monitoring_primary_source_name = selected_binding["name"]
 
     if standalone_mode:
         _render_standalone_live_window(
@@ -316,14 +531,14 @@ def render_online_monitoring(
             f"Главный источник всегда имеет приоритет."
         )
 
-    left_col, right_col = st.columns([2.2, 0.9], gap="large")
+    left_col, right_col = st.columns([2.9, 0.72], gap="medium")
     with right_col:
         state_panel_placeholder = st.empty()
         statuses_panel_placeholder = st.empty()
 
     def _render_status_sidebars():
         with state_panel_placeholder.container(border=True):
-            st.subheader("Панель состояния")
+            st.markdown("### Панель состояния")
             if selected_binding["kind"] == "production":
                 status_fps = round(selected_status.get("fps") or 0.0, 2)
             elif selected_binding["kind"] == "local_camera":
@@ -333,18 +548,35 @@ def render_online_monitoring(
                 status_fps = round(browser_fps or 0.0, 2) if browser_fps else "—"
             else:
                 status_fps = "—"
-            st.metric("FPS", status_fps)
-            st.metric("Режим потока", _resolve_stream_mode_label(selected_binding))
-            st.metric("Порог confidence", round(conf_threshold, 2))
-            st.metric("Источник потока", _resolve_source_name(selected_binding, selected_source))
-            st.metric("Активная модель", model_name)
-            st.metric("Точка прохода", access_point_name)
-            st.metric("Последний кадр", _fmt_ts(_resolve_binding_last_frame_at(selected_binding, session_state)))
+            st.markdown(
+                f"""
+                <div class="ops-panel">
+                    <div class="source-tile-header">
+                        <div>
+                            <div class="source-tile-title">{_resolve_source_name(selected_binding, selected_source)}</div>
+                            <div class="source-tile-subtitle">{_format_source_kind_label(selected_binding.get('kind_label') or selected_binding.get('kind'))}</div>
+                        </div>
+                        <span class="source-status-chip" style="background:{_status_chip_color(_resolve_binding_status(selected_binding, session_state, source_card=source_cards.get(selected_binding.get('source_id'), {})))};">
+                            {_format_status_label(_resolve_binding_status(selected_binding, session_state, source_card=source_cards.get(selected_binding.get('source_id'), {})))}
+                        </span>
+                    </div>
+                    <div class="ops-grid">
+                        <div class="ops-card"><div class="ops-label">FPS</div><div class="ops-value">{status_fps}</div></div>
+                        <div class="ops-card"><div class="ops-label">Последний кадр</div><div class="ops-value">{_fmt_ts(_resolve_binding_last_frame_at(selected_binding, session_state))}</div></div>
+                        <div class="ops-card"><div class="ops-label">Режим потока</div><div class="ops-value">{_resolve_stream_mode_label(selected_binding)}</div></div>
+                        <div class="ops-card"><div class="ops-label">Порог confidence</div><div class="ops-value">{round(conf_threshold, 2)}</div></div>
+                        <div class="ops-card"><div class="ops-label">Активная модель</div><div class="ops-value">{model_name}</div></div>
+                        <div class="ops-card"><div class="ops-label">Точка прохода</div><div class="ops-value">{access_point_name}</div></div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
             if selected_status.get("last_error"):
-                st.error(selected_status["last_error"])
+                st.markdown(f'<div class="ops-alert">{selected_status["last_error"]}</div>', unsafe_allow_html=True)
 
         with statuses_panel_placeholder.container(border=True):
-            st.subheader("Статусы источников")
+            st.markdown("### Источники")
             for binding in displayed_bindings:
                 card = source_cards.get(binding.get("source_id"), {})
                 st.markdown(
@@ -381,24 +613,22 @@ def render_online_monitoring(
 
     with left_col:
         with st.container(border=True):
-            st.subheader("Онлайн-мониторинг входной зоны")
+            st.markdown("### Онлайн-мониторинг входной зоны")
             if not standalone_mode:
-                link_col1, link_col2 = st.columns(2)
-                with link_col1:
-                    live_window_url = _build_live_window_url(selected_binding, overlay_enabled=True)
-                    st.markdown(
-                        f'<a href="{live_window_url}" target="_blank" rel="noopener noreferrer">Открыть live monitoring в отдельном окне</a>',
-                        unsafe_allow_html=True,
-                    )
-                with link_col2:
-                    clean_window_url = _build_live_window_url(selected_binding, overlay_enabled=False)
-                    st.markdown(
-                        f'<a href="{clean_window_url}" target="_blank" rel="noopener noreferrer">Открыть чистое окно без overlay</a>',
-                        unsafe_allow_html=True,
-                    )
-            st.caption(
-                "Production-источники поступают из worker runtime. Browser/local источники доступны как foreground live mode "
-                "и не дублируют server-side pipeline."
+                live_window_url = _build_live_window_url(selected_binding, overlay_enabled=True)
+                clean_window_url = _build_live_window_url(selected_binding, overlay_enabled=False)
+                st.markdown(
+                    f"""
+                    <div class="video-link-row">
+                        <a href="{live_window_url}" target="_blank" rel="noopener noreferrer">Открыть отдельное окно</a>
+                        <a href="{clean_window_url}" target="_blank" rel="noopener noreferrer">Чистое окно без overlay</a>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            st.markdown(
+                '<div class="video-wall-note">Production-источники читаются из worker runtime. Browser/local live работает как foreground-режим и не вмешивается в server-side pipeline.</div>',
+                unsafe_allow_html=True,
             )
             _render_source_layout(
                 st,
@@ -421,7 +651,7 @@ def render_online_monitoring(
             )
 
         with st.container(border=True):
-            st.subheader("Последние события входной зоны")
+            st.markdown("### Последние события")
             latest_rows = [
                 {
                     "Время": datetime.fromtimestamp(event["timestamp"]).strftime("%H:%M:%S"),
@@ -429,7 +659,7 @@ def render_online_monitoring(
                     "Источник": event.get("source_name"),
                     "Уверенность": round(event.get("confidence") or 0.0, 3),
                 }
-                for event in events[:12]
+                for event in events[:8]
             ]
             st.dataframe(pd.DataFrame(latest_rows), width="stretch", hide_index=True)
 
@@ -594,6 +824,52 @@ def _render_source_layout(
     embed_secondary_live: bool,
     status_panel_callback=None,
 ):
+    if layout_mode == "auto layout":
+        primary = bindings[:1]
+        secondary = bindings[1:]
+        for binding in primary:
+            _render_source_tile(
+                st,
+                binding=binding,
+                source_card=source_cards.get(binding.get("source_id"), {}),
+                is_primary=True,
+                model_name=model_name,
+                model=model,
+                class_meta=class_meta,
+                inference_size=inference_size,
+                conf_threshold=conf_threshold,
+                frame_skip=frame_skip,
+                session_state=session_state,
+                db_insert_event=db_insert_event,
+                db_insert_frame=db_insert_frame,
+                db_upsert_session=db_upsert_session,
+                embed_secondary_live=embed_secondary_live,
+                status_panel_callback=status_panel_callback,
+            )
+        if secondary:
+            columns = st.columns(2, gap="medium")
+            for index, binding in enumerate(secondary[:4]):
+                with columns[index % 2]:
+                    _render_source_tile(
+                        st,
+                        binding=binding,
+                        source_card=source_cards.get(binding.get("source_id"), {}),
+                        is_primary=False,
+                        model_name=model_name,
+                        model=model,
+                        class_meta=class_meta,
+                        inference_size=inference_size,
+                        conf_threshold=conf_threshold,
+                        frame_skip=frame_skip,
+                        session_state=session_state,
+                        db_insert_event=db_insert_event,
+                        db_insert_frame=db_insert_frame,
+                        db_upsert_session=db_upsert_session,
+                        embed_secondary_live=embed_secondary_live,
+                        status_panel_callback=status_panel_callback,
+                    )
+        return
+
     if layout_mode == "list":
         for binding in bindings:
             _render_source_tile(
@@ -685,13 +961,18 @@ def _render_source_tile(
         source_status = _resolve_binding_status(binding, session_state, source_card=source_card)
         st.markdown(
             f"""
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px;">
-                <div>
-                    <div style="font-size:18px;font-weight:700;color:#eef6ff;">{binding['name']}</div>
-                    <div style="font-size:12px;color:#8ea4ba;text-transform:uppercase;letter-spacing:.08em;">{binding['kind_label']} • {badge}</div>
+            <div class="source-tile-shell">
+                <div class="source-tile-header">
+                    <div>
+                        <div class="source-tile-title">{binding['name']}</div>
+                        <div class="source-tile-subtitle">{_format_source_kind_label(binding['kind_label'])} • {badge}</div>
+                    </div>
+                    <span class="source-status-chip" style="background:{_status_chip_color(source_status)};">{_format_status_label(source_status)}</span>
                 </div>
-                <div style="padding:6px 10px;border-radius:999px;background:rgba(15,23,42,.7);border:1px solid rgba(148,163,184,.18);color:#d9e7f5;font-size:12px;">
-                    {source_status}
+                <div class="source-meta-row">
+                    <span class="source-meta-pill">FPS: {_resolve_binding_fps(binding, session_state, source_card=source_card)}</span>
+                    <span class="source-meta-pill">Последний кадр: {_fmt_ts(_resolve_binding_last_frame_at(binding, session_state))}</span>
+                    <span class="source-meta-pill">События: {source_card.get("recent_event_count", 0)}</span>
                 </div>
             </div>
             """,
@@ -704,7 +985,7 @@ def _render_source_tile(
             else:
                 st.info("Worker еще не сохранил snapshot для этого источника.")
             if source_card.get("last_error"):
-                st.caption(f"Ошибка: {source_card['last_error']}")
+                st.markdown(f'<div class="compact-caption">Ошибка: {source_card["last_error"]}</div>', unsafe_allow_html=True)
             return
 
         if not is_primary:
@@ -769,23 +1050,18 @@ def _render_embedded_live_source(st, binding: dict):
 
 
 def _render_source_status_badge(*, title: str, source_type: str, status: str, fps, last_frame_at: str, recent_event_count: int, error_text: str, live_window_url: str) -> str:
-    status_colors = {
-        "online": "#10b981",
-        "reconnecting": "#f59e0b",
-        "offline": "#ef4444",
-    }
-    status_color = status_colors.get(status, "#94a3b8")
+    status_color = _status_chip_color(status)
     error_html = f"<div style='margin-top:6px;color:#fca5a5'>{error_text}</div>" if error_text else ""
     return f"""
-    <div style="border:1px solid rgba(148,163,184,.18);border-radius:16px;padding:12px 14px;margin-bottom:10px;background:rgba(15,23,42,.35);">
+    <div class="source-status-card">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
             <div>
-                <div style="font-weight:600;color:#e2e8f0;">{title}</div>
-                <div style="font-size:12px;color:#94a3b8;">{source_type}</div>
+                <div style="font-weight:650;color:#e2e8f0;">{title}</div>
+                <div style="font-size:11px;color:#94a3b8;">{_format_source_kind_label(source_type)}</div>
             </div>
-            <span style="padding:4px 10px;border-radius:999px;background:{status_color};color:#fff;font-size:12px;">{status}</span>
+            <span class="source-status-chip" style="background:{status_color};">{_format_status_label(status)}</span>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px;font-size:12px;color:#cbd5e1;">
+        <div class="source-status-meta">
             <div>FPS: {fps if fps not in (None, '') else '—'}</div>
             <div>События: {recent_event_count}</div>
             <div>Последний кадр: {last_frame_at}</div>
@@ -802,23 +1078,23 @@ def _render_monitoring_wall_summary(st, *, displayed_bindings: list[dict], prima
     total_recent_events = sum((source_cards.get(binding.get("source_id")) or {}).get("recent_event_count", 0) for binding in displayed_bindings)
     st.markdown(
         f"""
-        <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:12px;margin-bottom:14px;">
-            <div style="padding:14px 16px;border-radius:18px;background:linear-gradient(135deg, rgba(9,18,28,.92), rgba(16,30,44,.92));border:1px solid rgba(88,166,255,.18);">
+        <div class="video-wall-shell" style="display:grid;grid-template-columns:2.2fr .9fr .9fr .95fr;gap:10px;margin-bottom:10px;">
+            <div class="video-wall-toolbar" style="padding:12px 14px;border-radius:18px;background:linear-gradient(135deg, rgba(9,18,28,.92), rgba(16,30,44,.92));border:1px solid rgba(88,166,255,.18);margin-bottom:0;">
                 <div style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#7f9bb5;">Security Video Wall</div>
-                <div style="margin-top:6px;font-size:22px;font-weight:700;color:#eef6ff;">{primary_binding['name']}</div>
-                <div style="margin-top:4px;color:#9fb3c8;">Главный источник видеостены • мультиэкранный мониторинг входной зоны</div>
+                <div style="margin-top:4px;font-size:20px;font-weight:700;color:#eef6ff;">{primary_binding['name']}</div>
+                <div style="margin-top:3px;font-size:.84rem;color:#9fb3c8;">Главный источник видеостены • мультиэкранный мониторинг входной зоны</div>
             </div>
-            <div style="padding:14px 16px;border-radius:18px;background:rgba(14,22,32,.92);border:1px solid rgba(148,163,184,.16);">
+            <div class="video-wall-toolbar" style="padding:12px 14px;margin-bottom:0;">
                 <div style="font-size:12px;color:#7f9bb5;text-transform:uppercase;">Отображается</div>
-                <div style="margin-top:8px;font-size:24px;font-weight:700;color:#eef6ff;">{len(displayed_bindings)}</div>
+                <div style="margin-top:6px;font-size:22px;font-weight:700;color:#eef6ff;">{len(displayed_bindings)}</div>
             </div>
-            <div style="padding:14px 16px;border-radius:18px;background:rgba(14,22,32,.92);border:1px solid rgba(148,163,184,.16);">
+            <div class="video-wall-toolbar" style="padding:12px 14px;margin-bottom:0;">
                 <div style="font-size:12px;color:#7f9bb5;text-transform:uppercase;">Online источники</div>
-                <div style="margin-top:8px;font-size:24px;font-weight:700;color:#7ee787;">{online_count}</div>
+                <div style="margin-top:6px;font-size:22px;font-weight:700;color:#7ee787;">{online_count}</div>
             </div>
-            <div style="padding:14px 16px;border-radius:18px;background:rgba(14,22,32,.92);border:1px solid rgba(148,163,184,.16);">
+            <div class="video-wall-toolbar" style="padding:12px 14px;margin-bottom:0;">
                 <div style="font-size:12px;color:#7f9bb5;text-transform:uppercase;">Live / события</div>
-                <div style="margin-top:8px;font-size:24px;font-weight:700;color:#eef6ff;">{interactive_count} / {total_recent_events}</div>
+                <div style="margin-top:6px;font-size:22px;font-weight:700;color:#eef6ff;">{interactive_count} / {total_recent_events}</div>
             </div>
         </div>
         """,
@@ -848,17 +1124,18 @@ def _render_standalone_live_window(
     st.markdown(
         """
         <style>
-            .standalone-live-shell {
-                width: 100vw;
-                min-height: 100vh;
-                overflow: hidden;
-                background: #000;
+            [data-testid="stAppViewContainer"],
+            [data-testid="stMainBlockContainer"] {
+                background: #000 !important;
             }
-            .standalone-live-shell video {
+            [data-testid="stImage"] img,
+            video {
                 width: 100vw !important;
                 height: 100vh !important;
                 object-fit: cover !important;
                 background: #000 !important;
+                margin: 0 !important;
+                display: block !important;
             }
             .standalone-overlay {
                 position: fixed;
@@ -888,16 +1165,22 @@ def _render_standalone_live_window(
                 <div>Точка доступа: {access_point_label}</div>
                 <div>Последний кадр: {_fmt_ts(selected_last_frame_at)}</div>
             </div>
-            <div class="standalone-live-shell">
             """,
             unsafe_allow_html=True,
         )
-    else:
-        st.markdown('<div class="standalone-live-shell">', unsafe_allow_html=True)
     if selected_binding["kind"] == "production" and selected_source is not None:
         snapshot_path = selected_status.get("last_snapshot_path")
         if snapshot_path and Path(snapshot_path).exists():
-            st.image(snapshot_path, width="stretch")
+            encoded_image = base64.b64encode(Path(snapshot_path).read_bytes()).decode("ascii")
+            st.markdown(
+                f"""
+                <img
+                    src="data:image/jpeg;base64,{encoded_image}"
+                    style="position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;background:#000;z-index:1;"
+                />
+                """,
+                unsafe_allow_html=True,
+            )
         else:
             st.warning("Для production-источника пока нет актуального snapshot от worker.")
     elif selected_binding["kind"] == "local_camera":
@@ -930,7 +1213,6 @@ def _render_standalone_live_window(
             db_upsert_session=db_upsert_session,
             standalone_mode=True,
         )
-    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _render_local_camera_monitor(
@@ -1135,7 +1417,10 @@ def _render_local_camera_monitor(
         if status_panel_callback is not None:
             status_panel_callback()
         if frame_rgb is not None and time.time() - last_ui_draw_ts >= DEFAULT_UI_REFRESH_INTERVAL_SEC:
-            frame_display.image(frame_rgb, channels="RGB", width="stretch")
+            if standalone_mode:
+                _render_fullscreen_frame(frame_display, frame_rgb)
+            else:
+                frame_display.image(frame_rgb, channels="RGB", width="stretch")
             last_ui_draw_ts = time.time()
         frame_index += 1
 

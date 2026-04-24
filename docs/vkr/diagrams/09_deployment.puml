@@ -1,0 +1,54 @@
+@startuml
+title Диаграмма развертывания контейнерной среды системы мониторинга
+
+node "Docker Host" {
+  node "Container: ui" {
+    component "Streamlit UI\napp.py"
+  }
+
+  node "Container: worker" {
+    component "Background Worker\nrun_worker.py"
+    component "video/worker.py"
+  }
+
+  node "Container: coturn" {
+    component "TURN Server\ncoturn"
+  }
+
+  folder "Volume: app_data" {
+    database "SQLite\nmonitoring.db"
+  }
+
+  folder "Volume: app_runtime" {
+    artifact "runtime_data/\nsnapshots"
+  }
+
+  artifact ".env / .env.example" as Env
+}
+
+cloud "RTSP/IP/HLS/USB sources" as VideoSources
+cloud "Browser client" as Browser
+
+Browser --> "Streamlit UI\napp.py"
+Browser --> "TURN Server\ncoturn"
+"Background Worker\nrun_worker.py" --> VideoSources
+"video/worker.py" --> "SQLite\nmonitoring.db"
+"video/worker.py" --> "runtime_data/\nsnapshots"
+"Streamlit UI\napp.py" --> "SQLite\nmonitoring.db"
+"Streamlit UI\napp.py" --> "runtime_data/\nsnapshots"
+Env ..> "Streamlit UI\napp.py"
+Env ..> "Background Worker\nrun_worker.py"
+Env ..> "TURN Server\ncoturn"
+
+note right of "Background Worker\nrun_worker.py"
+Production path:
+непрерывная обработка
+источников видео
+end note
+
+note left of "TURN Server\ncoturn"
+Поддержка browser live
+через STUN/TURN-контур
+end note
+
+@enduml

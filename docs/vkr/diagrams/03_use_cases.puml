@@ -1,0 +1,55 @@
+@startuml
+left to right direction
+title Диаграмма вариантов использования системы мониторинга проходной зоны
+
+actor "Пользователь системы" as User
+actor "Фоновый worker" as Worker
+
+rectangle "Веб-система мониторинга" {
+  usecase "Просмотр дашборда" as UC1
+  usecase "Выбор и активация\nисточников видео" as UC2
+  usecase "Контроль состояния\nисточников" as UC3
+  usecase "Наблюдение за входной зоной" as UC4
+  usecase "Работа с multi-source\nmonitoring" as UC5
+  usecase "Выбор режима отображения\nФокус / Сетка 2x2 /\nСписок / Авто-компоновка" as UC6
+  usecase "Открытие источника\nв live-window" as UC7
+  usecase "Просмотр snapshot и\nlive-состояния" as UC8
+  usecase "Просмотр и фильтрация\nжурнала событий" as UC9
+  usecase "Ручная привязка события\nк сотруднику" as UC10
+  usecase "Работа со справочником\nсотрудников" as UC11
+  usecase "Запуск синхронизации\nemployee directory" as UC12
+  usecase "Просмотр аналитики" as UC13
+  usecase "Изменение системных\nнастроек" as UC14
+
+  usecase "Непрерывная обработка\nproduction-источников" as UC15
+  usecase "Формирование событий\nпроходной" as UC16
+  usecase "Обновление worker_status\nи snapshots" as UC17
+}
+
+User --> UC1
+User --> UC2
+User --> UC3
+User --> UC4
+User --> UC5
+User --> UC6
+User --> UC7
+User --> UC8
+User --> UC9
+User --> UC10
+User --> UC11
+User --> UC12
+User --> UC13
+User --> UC14
+
+Worker --> UC15
+Worker --> UC16
+Worker --> UC17
+
+UC4 ..> UC8 : <<include>>
+UC5 ..> UC6 : <<include>>
+UC9 ..> UC10 : <<extend>>
+UC11 ..> UC12 : <<extend>>
+UC15 ..> UC16 : <<include>>
+UC15 ..> UC17 : <<include>>
+
+@enduml

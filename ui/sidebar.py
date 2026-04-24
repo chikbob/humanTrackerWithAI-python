@@ -38,7 +38,7 @@ ROTATION_OPTIONS = ["0°", "90° вправо", "180°", "90° влево"]
 ROTATION_MAP = {"0°": 0, "90° вправо": 90, "180°": 180, "90° влево": 270}
 
 
-def render_app_sidebar(st, *, video_sources: list[dict], system_settings: dict):
+def render_app_sidebar(st, *, video_sources: list[dict], system_settings: dict, monitored_source_count: int | None = None):
     st.sidebar.markdown("### Контур управления")
     section = st.sidebar.radio("Раздел системы", options=SECTIONS, index=0)
     st.sidebar.markdown("---")
@@ -51,8 +51,9 @@ def render_app_sidebar(st, *, video_sources: list[dict], system_settings: dict):
     )
     st.sidebar.caption(MODEL_CAPTIONS.get(model_name, "рабочая модель"))
     active_sources = [source for source in video_sources if source.get("is_active")]
-    st.sidebar.metric("Активных источников", len(active_sources))
-    st.sidebar.metric("Режим production", "включен" if active_sources else "ожидает источник")
+    effective_source_count = monitored_source_count if monitored_source_count is not None else len(active_sources)
+    st.sidebar.metric("Активных источников", effective_source_count)
+    st.sidebar.metric("Режим production", "включен" if effective_source_count else "ожидает источник")
     st.sidebar.caption(
         "Production-источники обслуживаются worker-процессом. "
         "Browser live работает как client-side WebRTC режим, а загрузка файлов остается демонстрационным сценарием."

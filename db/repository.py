@@ -741,7 +741,7 @@ def load_employees():
             reference_count,
             last_synced_at
         FROM employees
-        ORDER BY last_name ASC, first_name ASC, middle_name ASC, full_name ASC
+        ORDER BY employee_number ASC, last_name ASC, first_name ASC, middle_name ASC
         """
     ).fetchall()
     conn.close()
@@ -1390,47 +1390,31 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
         (str(access_point_ids[0]), now_ts),
     )
 
-    last_names = [
-        "Иванов",
-        "Петров",
-        "Сидоров",
-        "Кузнецов",
-        "Смирнов",
-        "Волков",
-        "Морозов",
-        "Соколов",
-        "Новиков",
-        "Егоров",
-        "Орлов",
-        "Федоров",
+    male_last_names = [
+        "Иванов", "Петров", "Сидоров", "Кузнецов", "Смирнов", "Волков", "Морозов", "Соколов",
+        "Новиков", "Егоров", "Орлов", "Федоров", "Макаров", "Павлов", "Захаров", "Белов",
+        "Тарасов", "Громов", "Андреев", "Никитин", "Комаров", "Лебедев", "Матвеев", "Бобров",
     ]
-    first_names = [
-        "Иван",
-        "Петр",
-        "Алексей",
-        "Дмитрий",
-        "Андрей",
-        "Сергей",
-        "Анна",
-        "Елена",
-        "Мария",
-        "Ольга",
-        "Наталья",
-        "Татьяна",
+    female_last_names = [
+        "Иванова", "Петрова", "Сидорова", "Кузнецова", "Смирнова", "Волкова", "Морозова", "Соколова",
+        "Новикова", "Егорова", "Орлова", "Федорова", "Макарова", "Павлова", "Захарова", "Белова",
+        "Тарасова", "Громова", "Андреева", "Никитина", "Комарова", "Лебедева", "Матвеева", "Боброва",
     ]
-    patronymics = [
-        "Иванович",
-        "Петрович",
-        "Сергеевич",
-        "Алексеевич",
-        "Андреевич",
-        "Дмитриевич",
-        "Ивановна",
-        "Петровна",
-        "Сергеевна",
-        "Алексеевна",
-        "Андреевна",
-        "Дмитриевна",
+    male_first_names = [
+        "Иван", "Петр", "Алексей", "Дмитрий", "Андрей", "Сергей", "Никита", "Максим",
+        "Павел", "Владимир", "Михаил", "Константин", "Евгений", "Антон", "Игорь", "Роман",
+    ]
+    female_first_names = [
+        "Анна", "Елена", "Мария", "Ольга", "Наталья", "Татьяна", "Светлана", "Виктория",
+        "Ирина", "Дарья", "Екатерина", "Полина", "Людмила", "Ксения", "Алина", "Юлия",
+    ]
+    male_patronymics = [
+        "Иванович", "Петрович", "Сергеевич", "Алексеевич", "Андреевич", "Дмитриевич", "Михайлович",
+        "Владимирович", "Николаевич", "Павлович", "Евгеньевич", "Константинович", "Олегович", "Игоревич",
+    ]
+    female_patronymics = [
+        "Ивановна", "Петровна", "Сергеевна", "Алексеевна", "Андреевна", "Дмитриевна", "Михайловна",
+        "Владимировна", "Николаевна", "Павловна", "Евгеньевна", "Константиновна", "Олеговна", "Игоревна",
     ]
     departments = [
         "Служба безопасности",
@@ -1455,9 +1439,15 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
     employee_statuses = ["active", "active", "active", "inactive", "on_leave", "blocked"]
     employee_ids = []
     for index in range(employee_count):
-        last_name = last_names[index % len(last_names)]
-        first_name = first_names[(index * 3) % len(first_names)]
-        middle_name = patronymics[(index * 5) % len(patronymics)]
+        is_female = index % 2 == 1
+        if is_female:
+            last_name = female_last_names[index % len(female_last_names)]
+            first_name = female_first_names[(index * 3) % len(female_first_names)]
+            middle_name = female_patronymics[(index * 5) % len(female_patronymics)]
+        else:
+            last_name = male_last_names[index % len(male_last_names)]
+            first_name = male_first_names[(index * 3) % len(male_first_names)]
+            middle_name = male_patronymics[(index * 5) % len(male_patronymics)]
         full_name = build_employee_full_name(last_name, first_name, middle_name)
         hire_date = now_ts - rng.randint(120, 2400) * 86400
         cursor = conn.execute(
@@ -1475,9 +1465,9 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
                 first_name,
                 middle_name,
                 f"EMP-{10000 + index}",
-                departments[index % len(departments)],
-                positions[index % len(positions)],
-                employee_statuses[index % len(employee_statuses)],
+                rng.choice(departments),
+                rng.choice(positions),
+                rng.choice(employee_statuses),
                 now_ts - rng.randint(10, 180) * 86400,
                 hire_date,
                 "local",
