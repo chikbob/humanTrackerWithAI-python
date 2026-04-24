@@ -11,6 +11,7 @@ from db.repository import (
     load_video_sources,
     load_worker_statuses,
 )
+from services.telemetry import build_worker_runtime_metrics
 
 
 def load_dashboard_summary(*, event_limit: int = 200) -> dict:
@@ -24,6 +25,12 @@ def load_dashboard_summary(*, event_limit: int = 200) -> dict:
     return {
         "settings": settings,
         "summary": build_kpi_summary(events, worker_statuses),
+        "telemetry": build_worker_runtime_metrics(
+            video_sources=video_sources,
+            worker_statuses=worker_statuses,
+            events=events,
+            settings=settings,
+        ),
         "video_sources": video_sources,
         "worker_statuses": worker_statuses,
         "access_points": access_points,

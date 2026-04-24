@@ -72,7 +72,8 @@ class ApiAppTests(unittest.TestCase):
     def test_health_endpoint(self):
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["status"], "ok")
+        self.assertIn(response.json()["status"], {"ok", "degraded"})
+        self.assertIn("telemetry", response.json())
 
     def test_video_sources_endpoint_returns_processing_config(self):
         response = self.client.get("/api/v1/video-sources")
@@ -95,6 +96,18 @@ class ApiAppTests(unittest.TestCase):
         response = self.client.put(f"/api/v1/video-sources/{source_id}/active", params={"is_active": "false"})
         self.assertEqual(response.status_code, 200)
         self.assertFalse(repository.load_video_sources()[0]["is_active"])
+
+    def test_metrics_endpoint_returns_prometheus_payload(self):
+        response = self.client.get("/metrics")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("human_tracker_source_count_total", response.text)
+
+    def test_health_details_returns_dashboard_snapshot(self):
+        response = self.client.get("/health/details")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("summary", payload)
+        self.assertIn("telemetry", payload)
 
 
 if __name__ == "__main__":

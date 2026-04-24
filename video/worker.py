@@ -31,6 +31,14 @@ class SourceWorker:
         self.session_state = SimpleNamespace(events=[], notifications=[], db_insert_event=db_insert_event)
         self.ingests = {}
         self.connection_state = {}
+        self.runtime_stats = {
+            "worker_started_at": time.time(),
+            "run_cycles_total": 0,
+            "processed_sources_total": 0,
+            "frames_processed_total": 0,
+            "frames_skipped_total": 0,
+            "stream_failures_total": 0,
+        }
 
     def run_forever(self):
         ensure_runtime_dirs()
@@ -44,12 +52,14 @@ class SourceWorker:
     def run_once(self) -> int:
         """Process one polling cycle so the worker can also be used in service wrappers and tests."""
         ensure_runtime_dirs()
+        self.runtime_stats["run_cycles_total"] += 1
         settings = self._read_settings()
         sources = load_active_video_sources()
         if not sources:
             return 0
         for source in sources:
             self._process_source(source, settings)
+        self.runtime_stats["processed_sources_total"] += len(sources)
         return len(sources)
 
     def _read_settings(self):
@@ -80,6 +90,11 @@ class SourceWorker:
                 "offline_event_sent": False,
                 "next_retry_ts": 0.0,
                 "last_error_text": "",
+                "frames_processed": 0,
+                "frames_skipped": 0,
+                "stream_failures": 0,
+                "last_processing_time_ms": 0.0,
+                "last_detection_count": 0,
             },
         )
         now_ts = time.time()
@@ -120,6 +135,8 @@ class SourceWorker:
         source_runtime["last_processed_sequence"] = frame_sequence
         source_runtime["last_frame_ts"] = frame_ts
         if settings["frame_skip"] > 0 and source_runtime["frame_index"] % (settings["frame_skip"] + 1) != 0:
+            source_runtime["frames_skipped"] += 1
+            self.runtime_stats["frames_skipped_total"] += 1
             self._write_status(source, "online", True, 0.0, "", "", last_frame_at=frame_ts)
             return
 
@@ -178,6 +195,10 @@ class SourceWorker:
         source_runtime["last_frame_ts"] = frame_ts
         source_runtime["next_retry_ts"] = 0.0
         source_runtime["last_error_text"] = ""
+        source_runtime["frames_processed"] += 1
+        source_runtime["last_processing_time_ms"] = processing_time_ms
+        source_runtime["last_detection_count"] = len(detections)
+        self.runtime_stats["frames_processed_total"] += 1
         self._write_status(source, "online", True, fps, "", snapshot_path, last_frame_at=frame_ts)
 
         if self.connection_state[source_id]["offline_event_sent"]:
@@ -220,6 +241,8 @@ class SourceWorker:
         source_runtime["reconnect_count"] += 1
         source_runtime["last_error_text"] = error_text
         source_runtime["last_processed_sequence"] = None
+        source_runtime["stream_failures"] += 1
+        self.runtime_stats["stream_failures_total"] += 1
         source_runtime["next_retry_ts"] = time.time() + max(int(settings["reconnect_interval"]), 1)
         self._write_status(
             source,
@@ -269,6 +292,29 @@ class SourceWorker:
             last_error=error_text,
             last_snapshot_path=snapshot_path,
         )
+
+    def get_runtime_snapshot(self) -> dict:
+        now_ts = time.time()
+        per_source = {}
+        for source_id, runtime in self.connection_state.items():
+            per_source[source_id] = {
+                "frame_index": runtime.get("frame_index", 0),
+                "frames_processed": runtime.get("frames_processed", 0),
+                "frames_skipped": runtime.get("frames_skipped", 0),
+                "stream_failures": runtime.get("stream_failures", 0),
+                "reconnect_count": runtime.get("reconnect_count", 0),
+                "last_processing_time_ms": runtime.get("last_processing_time_ms", 0.0),
+                "last_detection_count": runtime.get("last_detection_count", 0),
+                "last_success_age_sec": max(0.0, now_ts - float(runtime.get("last_success_ts") or now_ts)),
+                "last_frame_age_sec": max(0.0, now_ts - float(runtime.get("last_frame_ts") or now_ts)),
+            }
+        return {
+            **self.runtime_stats,
+            "uptime_sec": max(0.0, now_ts - float(self.runtime_stats["worker_started_at"])),
+            "active_ingests": sum(1 for ingest in self.ingests.values() if ingest is not None and ingest.is_running()),
+            "tracked_sources": len(self.connection_state),
+            "sources": per_source,
+        }
 
     def close(self):
         """Release all captures so the worker can be stopped cleanly by a supervisor."""

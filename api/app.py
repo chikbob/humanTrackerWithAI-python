@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from fastapi.responses import PlainTextResponse
 from fastapi import FastAPI, HTTPException, Query
 
 from analytics.access import enrich_event_rows
@@ -17,6 +18,7 @@ from db.repository import (
     set_video_source_active,
 )
 from services.system_api import load_dashboard_summary
+from services.telemetry import build_prometheus_metrics, build_worker_runtime_metrics
 
 
 def create_app() -> FastAPI:
@@ -29,7 +31,36 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"status": "ok"}
+        settings = load_system_settings()
+        video_sources = load_video_sources()
+        worker_statuses = load_worker_statuses()
+        events = enrich_event_rows(load_events(limit=200), video_sources, worker_statuses)
+        telemetry = build_worker_runtime_metrics(
+            video_sources=video_sources,
+            worker_statuses=worker_statuses,
+            events=events,
+            settings=settings,
+        )
+        status = "ok" if telemetry["source_count_stale"] == 0 else "degraded"
+        return {"status": status, "telemetry": telemetry}
+
+    @app.get("/health/details")
+    def health_details():
+        return load_dashboard_summary(event_limit=200)
+
+    @app.get("/metrics", response_class=PlainTextResponse)
+    def metrics():
+        settings = load_system_settings()
+        video_sources = load_video_sources()
+        worker_statuses = load_worker_statuses()
+        events = enrich_event_rows(load_events(limit=500), video_sources, worker_statuses)
+        telemetry = build_worker_runtime_metrics(
+            video_sources=video_sources,
+            worker_statuses=worker_statuses,
+            events=events,
+            settings=settings,
+        )
+        return build_prometheus_metrics(telemetry)
 
     @app.get("/api/v1/system/settings")
     def get_system_settings():
