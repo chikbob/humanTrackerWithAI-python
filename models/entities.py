@@ -28,6 +28,21 @@ class WorkerStatus:
 
 
 @dataclass
+class Zone:
+    id: Optional[int]
+    source_id: int
+    name: str
+    zone_type: str
+    x: float
+    y: float
+    w: float
+    h: float
+    is_active: bool
+    description: str
+    created_at: Optional[float]
+
+
+@dataclass
 class SystemSetting:
     key: str
     value: str

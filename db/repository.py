@@ -118,6 +118,39 @@ def _video_source_select_columns() -> str:
     """
 
 
+def _zone_select_columns() -> str:
+    return """
+        id, source_id, name, zone_type, x, y, w, h, is_active, description, created_at
+    """
+
+
+def normalize_zone_config(zone: dict | None = None) -> dict:
+    zone = zone or {}
+    normalized = {
+        "name": (zone.get("name") or "").strip() or "Новая зона",
+        "zone_type": (zone.get("zone_type") or "observation").strip() or "observation",
+        "x": float(zone.get("x", 20)),
+        "y": float(zone.get("y", 20)),
+        "w": float(zone.get("w", 60)),
+        "h": float(zone.get("h", 60)),
+        "is_active": bool(zone.get("is_active", True)),
+        "description": (zone.get("description") or "").strip(),
+    }
+    normalized["x"] = max(0.0, min(100.0, normalized["x"]))
+    normalized["y"] = max(0.0, min(100.0, normalized["y"]))
+    normalized["w"] = max(1.0, min(100.0 - normalized["x"], normalized["w"]))
+    normalized["h"] = max(1.0, min(100.0 - normalized["y"], normalized["h"]))
+    return normalized
+
+
+def _normalize_zone_row(row: dict | sqlite3.Row) -> dict:
+    zone = dict(row)
+    zone.update(normalize_zone_config(zone))
+    zone["source_id"] = int(zone["source_id"])
+    zone["id"] = int(zone["id"])
+    return zone
+
+
 def _normalize_video_source_row(row: dict | sqlite3.Row) -> dict:
     source = dict(row)
     source.update(normalize_source_processing_config(source))
@@ -336,6 +369,24 @@ def init_db():
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS zones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            zone_type TEXT NOT NULL DEFAULT 'observation',
+            x REAL DEFAULT 20,
+            y REAL DEFAULT 20,
+            w REAL DEFAULT 60,
+            h REAL DEFAULT 60,
+            is_active INTEGER DEFAULT 1,
+            description TEXT,
+            created_at REAL,
+            FOREIGN KEY (source_id) REFERENCES video_sources(id)
+        )
+        """
+    )
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS experiment_runs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             run_key TEXT UNIQUE,
@@ -420,6 +471,22 @@ def init_db():
             ("last_error", "last_error TEXT"),
             ("last_snapshot_path", "last_snapshot_path TEXT"),
             ("updated_at", "updated_at REAL"),
+        ],
+    )
+    _ensure_columns(
+        conn,
+        "zones",
+        [
+            ("source_id", "source_id INTEGER"),
+            ("name", "name TEXT NOT NULL DEFAULT 'Новая зона'"),
+            ("zone_type", "zone_type TEXT NOT NULL DEFAULT 'observation'"),
+            ("x", "x REAL DEFAULT 20"),
+            ("y", "y REAL DEFAULT 20"),
+            ("w", "w REAL DEFAULT 60"),
+            ("h", "h REAL DEFAULT 60"),
+            ("is_active", "is_active INTEGER DEFAULT 1"),
+            ("description", "description TEXT"),
+            ("created_at", "created_at REAL"),
         ],
     )
     _ensure_columns(
@@ -1229,6 +1296,30 @@ def load_video_sources():
     return [_normalize_video_source_row(row) for row in rows]
 
 
+def load_zones(*, source_id: int | None = None):
+    conn = get_db_conn()
+    if source_id is None:
+        rows = conn.execute(
+            f"""
+            SELECT {_zone_select_columns()}
+            FROM zones
+            ORDER BY is_active DESC, source_id ASC, name ASC
+            """
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            f"""
+            SELECT {_zone_select_columns()}
+            FROM zones
+            WHERE source_id = ?
+            ORDER BY is_active DESC, name ASC
+            """,
+            (source_id,),
+        ).fetchall()
+    conn.close()
+    return [_normalize_zone_row(row) for row in rows]
+
+
 def replace_employee_cache(employees: list[dict], *, source_system: str, synced_at=None):
     conn = get_db_conn()
     synced_at = synced_at or time.time()
@@ -1404,6 +1495,53 @@ def create_video_source(
     conn.close()
 
 
+def create_zone(
+    *,
+    source_id: int,
+    name: str,
+    zone_type: str,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    is_active: bool = True,
+    description: str = "",
+):
+    config = normalize_zone_config(
+        {
+            "name": name,
+            "zone_type": zone_type,
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "is_active": is_active,
+            "description": description,
+        }
+    )
+    conn = get_db_conn()
+    conn.execute(
+        """
+        INSERT INTO zones (source_id, name, zone_type, x, y, w, h, is_active, description, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(source_id),
+            config["name"],
+            config["zone_type"],
+            config["x"],
+            config["y"],
+            config["w"],
+            config["h"],
+            1 if config["is_active"] else 0,
+            config["description"],
+            time.time(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
 def update_video_source(
     *,
     source_id: int,
@@ -1473,9 +1611,62 @@ def update_video_source(
     conn.close()
 
 
+def update_zone(
+    *,
+    zone_id: int,
+    source_id: int,
+    name: str,
+    zone_type: str,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    description: str = "",
+):
+    config = normalize_zone_config(
+        {
+            "name": name,
+            "zone_type": zone_type,
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "description": description,
+        }
+    )
+    conn = get_db_conn()
+    conn.execute(
+        """
+        UPDATE zones
+        SET source_id = ?, name = ?, zone_type = ?, x = ?, y = ?, w = ?, h = ?, description = ?
+        WHERE id = ?
+        """,
+        (
+            int(source_id),
+            config["name"],
+            config["zone_type"],
+            config["x"],
+            config["y"],
+            config["w"],
+            config["h"],
+            config["description"],
+            int(zone_id),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
 def set_video_source_active(*, source_id: int, is_active: bool):
     conn = get_db_conn()
     conn.execute("UPDATE video_sources SET is_active = ? WHERE id = ?", (1 if is_active else 0, source_id))
+    conn.commit()
+    conn.close()
+
+
+def set_zone_active(*, zone_id: int, is_active: bool):
+    conn = get_db_conn()
+    conn.execute("UPDATE zones SET is_active = ? WHERE id = ?", (1 if is_active else 0, int(zone_id)))
     conn.commit()
     conn.close()
 

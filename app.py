@@ -11,6 +11,7 @@ from core.detection import build_class_meta, load_model
 from db.repository import (
     create_employee,
     create_video_source,
+    create_zone,
     db_insert_event,
     db_insert_frame,
     db_upsert_session,
@@ -24,15 +25,18 @@ from db.repository import (
     load_system_settings,
     load_video_sources,
     load_worker_statuses,
+    load_zones,
     replace_employee_cache,
     reset_and_seed_demo_data,
     set_system_setting,
     set_video_source_active,
+    set_zone_active,
     link_event_to_employee,
     upsert_employee_sync_state,
     update_employee,
     update_employee_status,
     update_video_source,
+    update_zone,
 )
 from services.employee_repository import build_employee_repository
 from services.employee_sync import maybe_sync_employee_directory
@@ -48,6 +52,7 @@ from ui.page import configure_page
 from ui.settings import render_system_settings
 from ui.sidebar import ANIMAL_CLASSES, render_app_sidebar
 from ui.sources import render_video_sources
+from ui.zones import render_zones
 
 
 # WebRTC worker threads emit a harmless Streamlit context warning on every frame.
@@ -138,6 +143,7 @@ def main():
         identity_backend=identity_backend,
     )
     worker_statuses = load_worker_statuses()
+    zones = load_zones()
     raw_events = load_events(limit=5000)
     events = enrich_event_rows(raw_events, video_sources, worker_statuses)
 
@@ -219,6 +225,16 @@ def main():
         )
     elif section == "Аналитика и отчеты":
         render_access_analytics(st, events=events, worker_statuses=worker_statuses)
+    elif section == "Камеры и зоны":
+        render_zones(
+            st,
+            video_sources=video_sources,
+            worker_statuses=worker_statuses,
+            zones=zones,
+            create_zone_fn=create_zone,
+            update_zone_fn=update_zone,
+            set_zone_active_fn=set_zone_active,
+        )
     elif section == "Источники видео":
         render_video_sources(
             st,
