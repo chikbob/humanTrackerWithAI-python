@@ -17,7 +17,7 @@ from db.repository import (
     upsert_worker_status,
 )
 from services.events import create_domain_entry_event
-from services.source_service import normalize_source_url
+from video.ingest import SourceIngestSession
 from video.pipeline import load_worker_model, process_source_frame
 from video.runtime import build_snapshot_path, create_runtime_session, ensure_runtime_dirs
 
@@ -29,7 +29,7 @@ class SourceWorker:
         self.source_models = {}
         self.source_sessions = {}
         self.session_state = SimpleNamespace(events=[], notifications=[], db_insert_event=db_insert_event)
-        self.captures = {}
+        self.ingests = {}
         self.connection_state = {}
 
     def run_forever(self):
@@ -74,6 +74,8 @@ class SourceWorker:
                 "frame_index": 0,
                 "reconnect_count": 0,
                 "last_success_ts": 0.0,
+                "last_frame_ts": 0.0,
+                "last_processed_sequence": None,
                 "offline_event_sent": False,
                 "next_retry_ts": 0.0,
                 "last_error_text": "",
@@ -91,21 +93,33 @@ class SourceWorker:
                 last_frame_at=source.get("last_seen"),
             )
             return
-        cap = self.captures.get(source_id)
-        if cap is None or not cap.isOpened():
-            cap = self._open_capture(source, settings, source_runtime)
-            if cap is None:
-                return
-            self.captures[source_id] = cap
-
-        ret, frame = cap.read()
-        if not ret:
-            self._handle_stream_failure(source, settings, source_runtime, "Не удалось получить кадр.")
+        ingest = self._get_or_create_ingest(source, settings, source_runtime)
+        if ingest is None:
             return
+        frame_packet = ingest.get_latest_frame(last_sequence=source_runtime.get("last_processed_sequence"))
+        if frame_packet is None:
+            frame_age = ingest.latest_frame_age(now_ts=now_ts)
+            if ingest.last_error:
+                self._handle_stream_failure(source, settings, source_runtime, ingest.last_error)
+                return
+            if frame_age is None:
+                if now_ts - ingest.started_at > max(1, int(settings["source_timeout"])):
+                    self._handle_stream_failure(source, settings, source_runtime, "Источник не отдал кадры после запуска.")
+                else:
+                    self._write_status(source, "connecting", False, 0.0, "", "", last_frame_at=source_runtime.get("last_frame_ts"))
+                return
+            if frame_age > float(settings["source_timeout"]):
+                self._handle_stream_failure(source, settings, source_runtime, "Источник перестал отдавать свежие кадры.")
+                return
+            self._write_status(source, "online", True, 0.0, "", "", last_frame_at=source_runtime.get("last_frame_ts"))
+            return
+        frame, frame_ts, frame_sequence = frame_packet
 
         source_runtime["frame_index"] += 1
+        source_runtime["last_processed_sequence"] = frame_sequence
+        source_runtime["last_frame_ts"] = frame_ts
         if settings["frame_skip"] > 0 and source_runtime["frame_index"] % (settings["frame_skip"] + 1) != 0:
-            self._write_status(source, "online", True, 0.0, "", "")
+            self._write_status(source, "online", True, 0.0, "", "", last_frame_at=frame_ts)
             return
 
         model = self.source_models.get(source_id)
@@ -159,9 +173,10 @@ class SourceWorker:
         update_video_source_last_seen(source_id=source_id, last_seen=now_ts)
         fps = 1000.0 / processing_time_ms if processing_time_ms > 0 else 0.0
         source_runtime["last_success_ts"] = now_ts
+        source_runtime["last_frame_ts"] = frame_ts
         source_runtime["next_retry_ts"] = 0.0
         source_runtime["last_error_text"] = ""
-        self._write_status(source, "online", True, fps, "", snapshot_path, last_frame_at=now_ts)
+        self._write_status(source, "online", True, fps, "", snapshot_path, last_frame_at=frame_ts)
 
         if self.connection_state[source_id]["offline_event_sent"]:
             self.connection_state[source_id]["offline_event_sent"] = False
@@ -178,22 +193,31 @@ class SourceWorker:
                 access_point_id=settings["default_access_point_id"],
             )
 
-    def _open_capture(self, source: dict, settings: dict, source_runtime: dict):
-        normalized_source = normalize_source_url(source["source_type"], source["source_url"])
-        cap = cv2.VideoCapture(normalized_source)
-        if not cap.isOpened():
-            self._handle_stream_failure(source, settings, source_runtime, "Не удалось открыть видеопоток.")
+    def _get_or_create_ingest(self, source: dict, settings: dict, source_runtime: dict):
+        source_id = source["id"]
+        ingest = self.ingests.get(source_id)
+        if ingest is not None and ingest.is_running():
+            return ingest
+        if ingest is not None:
+            ingest.close()
+        ingest = SourceIngestSession(source=source)
+        if not ingest.start():
+            self._handle_stream_failure(source, settings, source_runtime, ingest.last_error or "Не удалось открыть видеопоток.")
+            self.ingests[source_id] = None
             return None
-        return cap
+        source_runtime["last_error_text"] = ""
+        self.ingests[source_id] = ingest
+        return ingest
 
     def _handle_stream_failure(self, source: dict, settings: dict, source_runtime: dict, error_text: str):
         source_id = source["id"]
-        existing_cap = self.captures.get(source_id)
-        if existing_cap is not None:
-            existing_cap.release()
-        self.captures[source_id] = None
+        existing_ingest = self.ingests.get(source_id)
+        if existing_ingest is not None:
+            existing_ingest.close()
+        self.ingests[source_id] = None
         source_runtime["reconnect_count"] += 1
         source_runtime["last_error_text"] = error_text
+        source_runtime["last_processed_sequence"] = None
         source_runtime["next_retry_ts"] = time.time() + max(int(settings["reconnect_interval"]), 1)
         self._write_status(
             source,
@@ -202,7 +226,7 @@ class SourceWorker:
             0.0,
             error_text,
             "",
-            last_frame_at=source.get("last_seen"),
+            last_frame_at=source_runtime.get("last_frame_ts") or source.get("last_seen"),
         )
         if not source_runtime["offline_event_sent"]:
             source_runtime["offline_event_sent"] = True
@@ -246,10 +270,10 @@ class SourceWorker:
 
     def close(self):
         """Release all captures so the worker can be stopped cleanly by a supervisor."""
-        for cap in self.captures.values():
-            if cap is not None:
-                cap.release()
-        self.captures.clear()
+        for ingest in self.ingests.values():
+            if ingest is not None:
+                ingest.close()
+        self.ingests.clear()
 
 
 def main(*, run_once: bool = False):
