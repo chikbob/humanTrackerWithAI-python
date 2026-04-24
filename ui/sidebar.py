@@ -6,12 +6,12 @@ from config.app_config import DEFAULT_MODEL_NAME
 
 
 SECTIONS = [
-    "Дашборд",
-    "Онлайн-мониторинг",
-    "Сотрудники",
-    "Журнал событий",
-    "Аналитика",
+    "Ситуационный центр",
+    "Оперативный мониторинг",
+    "Журнал инцидентов",
+    "Аналитика и отчеты",
     "Источники видео",
+    "Справочник персонала",
     "Настройки системы",
 ]
 
@@ -55,8 +55,8 @@ def render_app_sidebar(st, *, video_sources: list[dict], system_settings: dict, 
     st.sidebar.metric("Активных источников", effective_source_count)
     st.sidebar.metric("Режим production", "включен" if effective_source_count else "ожидает источник")
     st.sidebar.caption(
-        "Production-источники обслуживаются worker-процессом. "
-        "Browser live работает как client-side WebRTC режим, а загрузка файлов остается демонстрационным сценарием."
+        "Production-источники обслуживаются worker-процессом и формируют поток инцидентов и статусов камер. "
+        "Browser live используется как вспомогательный сценарий диагностики и оперативной проверки."
     )
     return {
         "section": section,

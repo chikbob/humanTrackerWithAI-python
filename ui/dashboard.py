@@ -1,4 +1,4 @@
-"""Dashboard view for enterprise entry-zone monitoring."""
+"""Dashboard view for enterprise monitored-zone operations."""
 
 from __future__ import annotations
 
@@ -37,11 +37,11 @@ def render_dashboard(
 
     top1, top2, top3, top4, top5, top6 = st.columns(6)
     top1.metric("Статус системы", system_status)
-    top2.metric("Статус активной камеры", camera_status)
-    top3.metric("Активная точка прохода", active_point)
+    top2.metric("Статус приоритетной камеры", camera_status)
+    top3.metric("Приоритетная зона контроля", active_point)
     top4.metric("Обнаружения за сегодня", summary["detections_today"])
-    top5.metric("Входы в зону прохода", summary["entries_today"])
-    top6.metric("Подозрительные события", summary["suspicious_today"])
+    top5.metric("Инциденты входа в зону", summary["entries_today"])
+    top6.metric("Тревожные инциденты", summary["suspicious_today"])
 
     second1, second2, second3, second4 = st.columns(4)
     second1.metric("Источники online", summary["online_cameras"])
@@ -52,7 +52,7 @@ def render_dashboard(
     left_col, right_col = st.columns([1.55, 1.0], gap="large")
     with left_col:
         with st.container(border=True):
-            st.subheader("Оперативная обстановка по входной зоне")
+            st.subheader("Оперативная обстановка по контролируемой зоне")
             if active_status and active_status.get("last_snapshot_path") and Path(active_status["last_snapshot_path"]).exists():
                 st.image(active_status["last_snapshot_path"], width="stretch", caption=f"Источник: {active_source['name']}")
             else:
@@ -64,13 +64,13 @@ def render_dashboard(
                 )
 
         with st.container(border=True):
-            st.subheader("Интенсивность событий по часам")
+            st.subheader("Интенсивность инцидентов по часам")
             distribution = build_time_distribution(
                 [event for event in events if datetime.fromtimestamp(event["timestamp"]).date() == datetime.now().date()]
             )
             if distribution.empty:
                 st.dataframe(pd.DataFrame(columns=["Час", "Событий"]), width="stretch", hide_index=True)
-                st.caption("За текущий день распределение событий еще не сформировано.")
+                st.caption("За текущий день распределение инцидентов еще не сформировано.")
             else:
                 chart_df = distribution.rename(columns={"hour": "Час", "count": "Событий"}).set_index("Час")
                 st.bar_chart(chart_df)
@@ -81,29 +81,29 @@ def render_dashboard(
 
     with right_col:
         with st.container(border=True):
-            st.subheader("Последние события проходной")
+            st.subheader("Последние зафиксированные инциденты")
             recent_rows = [
                 {
                     "Время": datetime.fromtimestamp(event["timestamp"]).strftime("%H:%M:%S"),
-                    "Событие": event.get("event_type"),
+                    "Инцидент": event.get("event_type"),
                     "Источник": event.get("source_name"),
-                    "Точка доступа": event.get("access_point_name") or "не задана",
-                    "Сотрудник": event.get("employee_name") or "не установлен",
+                    "Зона": event.get("access_point_name") or "не задана",
+                    "Контекст": event.get("employee_name") or "не установлен",
                     "Уверенность": round(event.get("confidence") or 0.0, 3),
                 }
                 for event in events[:10]
             ]
             st.dataframe(pd.DataFrame(recent_rows), width="stretch", hide_index=True)
         with st.container(border=True):
-            st.subheader("Топ событий и сбои")
+            st.subheader("Топ инцидентов и сбои")
             top_events = build_top_event_types(events, limit=6)
-            st.dataframe(top_events.rename(columns={"event_type": "Тип события", "count": "Количество"}), width="stretch", hide_index=True)
+            st.dataframe(top_events.rename(columns={"event_type": "Тип инцидента", "count": "Количество"}), width="stretch", hide_index=True)
             offline_df = build_offline_source_summary(events)
             if offline_df.empty:
-                st.caption("За текущий период offline-события по камерам не зафиксированы.")
+                st.caption("За текущий период offline-инциденты по камерам не зафиксированы.")
             else:
                 st.dataframe(
-                    offline_df.rename(columns={"source_name": "Источник", "offline_events": "Offline-событий"}),
+                    offline_df.rename(columns={"source_name": "Источник", "offline_events": "Offline-инцидентов"}),
                     width="stretch",
                     hide_index=True,
                 )

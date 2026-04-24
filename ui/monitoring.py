@@ -620,7 +620,7 @@ def render_online_monitoring(
 
     with left_col:
         with st.container(border=True):
-            st.markdown("### Онлайн-мониторинг входной зоны")
+            st.markdown("### Оперативный мониторинг контролируемых зон")
             if not standalone_mode:
                 live_window_url = _build_live_window_url(selected_binding, overlay_enabled=True)
                 clean_window_url = _build_live_window_url(selected_binding, overlay_enabled=False)
@@ -634,7 +634,7 @@ def render_online_monitoring(
                     unsafe_allow_html=True,
                 )
             st.markdown(
-                '<div class="video-wall-note">Production-источники читаются из worker runtime. Browser/local live работает как foreground-режим и не вмешивается в server-side pipeline.</div>',
+                '<div class="video-wall-note">Production-источники читаются из worker runtime и формируют оперативный контур наблюдения. Browser/local live используется как вспомогательный foreground-режим диагностики.</div>',
                 unsafe_allow_html=True,
             )
             _render_source_layout(
@@ -1189,7 +1189,7 @@ def _render_monitoring_wall_summary(st, *, displayed_bindings: list[dict], prima
             <div class="video-wall-toolbar" style="padding:12px 14px;border-radius:18px;background:linear-gradient(135deg, rgba(9,18,28,.92), rgba(16,30,44,.92));border:1px solid rgba(88,166,255,.18);margin-bottom:0;">
                 <div style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#7f9bb5;">Security Video Wall</div>
                 <div style="margin-top:4px;font-size:20px;font-weight:700;color:#eef6ff;">{primary_binding['name']}</div>
-                <div style="margin-top:3px;font-size:.84rem;color:#9fb3c8;">Главный источник видеостены • мультиэкранный мониторинг входной зоны</div>
+                <div style="margin-top:3px;font-size:.84rem;color:#9fb3c8;">Главный источник видеостены • мультиэкранный мониторинг контролируемых зон</div>
             </div>
             <div class="video-wall-toolbar" style="padding:12px 14px;margin-bottom:0;">
                 <div style="font-size:12px;color:#7f9bb5;text-transform:uppercase;">Отображается</div>
@@ -1270,7 +1270,7 @@ def _render_standalone_live_window(
             <div class="standalone-overlay">
                 <div><strong>{source_name}</strong></div>
                 <div>Режим: {selected_binding.get('kind_label', selected_binding.get('kind', 'unknown'))}</div>
-                <div>Точка доступа: {access_point_label}</div>
+                <div>Зона контроля: {access_point_label}</div>
                 <div>Последний кадр: {_fmt_ts(selected_last_frame_at)}</div>
             </div>
             """,

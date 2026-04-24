@@ -1,4 +1,4 @@
-"""Event journal UI."""
+"""Incident journal UI."""
 
 from __future__ import annotations
 
@@ -33,24 +33,24 @@ def render_event_journal(
     employees: list[dict],
     link_event_to_employee_fn,
 ):
-    st.subheader("Журнал событий проходной")
+    st.subheader("Журнал инцидентов и наблюдений")
     if not events:
         st.dataframe(
             pd.DataFrame(
                 columns=[
                     "Время",
-                    "Тип события",
+                    "Тип инцидента",
                     "Источник",
-                    "Точка доступа",
-                    "Сотрудник",
-                    "Статус связи",
+                    "Зона",
+                    "Контекст",
+                    "Статус идентификации",
                     "Уверенность",
                 ]
             ),
             width="stretch",
             hide_index=True,
         )
-        st.caption("Журнал пуст. После запуска worker или активного источника записи появятся автоматически.")
+        st.caption("Журнал пуст. После запуска worker и появления инцидентов записи появятся автоматически.")
         return
 
     df = pd.DataFrame(
@@ -59,13 +59,13 @@ def render_event_journal(
                 "event_id": event["event_id"],
                 "employee_id": event.get("employee_id") or event.get("identified_employee_id"),
                 "Время": datetime.fromtimestamp(event["timestamp"]),
-                "Тип события": event.get("event_type") or "—",
+                "Тип инцидента": event.get("event_type") or "—",
                 "Уровень": event.get("event_scope") or "raw",
                 "Источник": event.get("source_name") or "—",
-                "Точка доступа": event.get("access_point_name") or "не задана",
-                "Сотрудник": event.get("employee_name") or "не установлен",
+                "Зона": event.get("access_point_name") or "не задана",
+                "Контекст": event.get("employee_name") or "не установлен",
                 "Табельный номер": event.get("employee_number") or "—",
-                "Статус связи": _format_identification_status(event.get("identification_status") or "unlinked"),
+                "Статус идентификации": _format_identification_status(event.get("identification_status") or "unlinked"),
                 "Уверенность": round(event.get("confidence") or 0.0, 3),
                 "Описание": event.get("message") or "",
             }
@@ -77,27 +77,27 @@ def render_event_journal(
     date_from, date_to = st.date_input("Период", value=(min_date, max_date))
     filters = st.columns(5)
     with filters[0]:
-        event_types = st.multiselect("Тип события", options=sorted(df["Тип события"].dropna().unique().tolist()))
+        event_types = st.multiselect("Тип инцидента", options=sorted(df["Тип инцидента"].dropna().unique().tolist()))
     with filters[1]:
         sources = st.multiselect("Источник", options=sorted(df["Источник"].dropna().unique().tolist()))
     with filters[2]:
         scopes = st.multiselect("Уровень", options=sorted(df["Уровень"].dropna().unique().tolist()))
     with filters[3]:
-        employees_filter = st.multiselect("Сотрудник", options=sorted(df["Сотрудник"].dropna().unique().tolist()))
+        employees_filter = st.multiselect("Контекст", options=sorted(df["Контекст"].dropna().unique().tolist()))
     with filters[4]:
-        statuses = st.multiselect("Статус связи", options=sorted(df["Статус связи"].dropna().unique().tolist()))
+        statuses = st.multiselect("Статус идентификации", options=sorted(df["Статус идентификации"].dropna().unique().tolist()))
 
     filtered = df[(df["Время"].dt.date >= date_from) & (df["Время"].dt.date <= date_to)]
     if event_types:
-        filtered = filtered[filtered["Тип события"].isin(event_types)]
+        filtered = filtered[filtered["Тип инцидента"].isin(event_types)]
     if sources:
         filtered = filtered[filtered["Источник"].isin(sources)]
     if scopes:
         filtered = filtered[filtered["Уровень"].isin(scopes)]
     if employees_filter:
-        filtered = filtered[filtered["Сотрудник"].isin(employees_filter)]
+        filtered = filtered[filtered["Контекст"].isin(employees_filter)]
     if statuses:
-        filtered = filtered[filtered["Статус связи"].isin(statuses)]
+        filtered = filtered[filtered["Статус идентификации"].isin(statuses)]
 
     st.dataframe(
         filtered.sort_values("Время", ascending=False),
@@ -109,26 +109,26 @@ def render_event_journal(
     st.download_button(
         "Экспорт CSV",
         data=csv_data.to_csv(index=False).encode("utf-8-sig"),
-        file_name="access_event_journal.csv",
+        file_name="incident_journal.csv",
         mime="text/csv",
     )
 
-    event_options = {f"{row['event_id']} · {row['Тип события']} · {row['Источник']}": row["event_id"] for _, row in filtered.head(100).iterrows()}
+    event_options = {f"{row['event_id']} · {row['Тип инцидента']} · {row['Источник']}": row["event_id"] for _, row in filtered.head(100).iterrows()}
     if not event_options:
-        st.caption("Для выбранных фильтров карточка события недоступна.")
+        st.caption("Для выбранных фильтров карточка инцидента недоступна.")
         return
-    selected_label = st.selectbox("Карточка события", options=list(event_options.keys()))
+    selected_label = st.selectbox("Карточка инцидента", options=list(event_options.keys()))
     selected_id = event_options[selected_label]
     selected_event = next(event for event in events if event["event_id"] == selected_id)
     detail_col, image_col = st.columns([1.25, 0.95], gap="large")
     with detail_col:
         with st.container(border=True):
-            st.markdown("**Детали события**")
-            st.write(f"Тип события: `{selected_event.get('event_type')}`")
+            st.markdown("**Детали инцидента**")
+            st.write(f"Тип инцидента: `{selected_event.get('event_type')}`")
             st.write(f"Источник: `{selected_event.get('source_name') or '—'}`")
-            st.write(f"Точка доступа: `{selected_event.get('access_point_name') or 'не задана'}`")
+            st.write(f"Зона: `{selected_event.get('access_point_name') or 'не задана'}`")
             st.write(
-                "Сотрудник: "
+                "Контекст: "
                 f"`{selected_event.get('employee_name') or 'не установлен'}`"
                 + (
                     f" · таб. № `{selected_event.get('employee_number')}`"
@@ -137,17 +137,17 @@ def render_event_journal(
                 )
             )
             st.write(f"Confidence: `{round(selected_event.get('confidence') or 0.0, 3)}`")
-            st.write(f"Статус связи: `{_format_identification_status(selected_event.get('identification_status') or 'unlinked')}`")
+            st.write(f"Статус идентификации: `{_format_identification_status(selected_event.get('identification_status') or 'unlinked')}`")
             st.write(f"Track/session: `{selected_event.get('track_id') or '—'}` / `{selected_event.get('session_id') or '—'}`")
             st.caption(selected_event.get("message") or "Описание отсутствует.")
         with st.container(border=True):
-            st.markdown("**Ручная привязка к сотруднику**")
+            st.markdown("**Ручное уточнение контекста инцидента**")
             employee_options = {
                 f"{employee.get('display_name') or employee.get('full_name')} [{employee.get('employee_number') or employee['id']}]": employee["id"]
                 for employee in employees
             }
             if not employee_options:
-                st.info("Справочник сотрудников пуст. Для ручной привязки сначала добавьте карточки сотрудников.")
+                st.info("Справочник персонала пуст. Для уточнения контекста сначала добавьте карточки сотрудников.")
             else:
                 selected_employee_label = st.selectbox(
                     "Сотрудник справочника",
@@ -155,7 +155,7 @@ def render_event_journal(
                     key=f"event_link_employee_{selected_id}",
                 )
                 link_status = st.selectbox(
-                    "Статус связи",
+                    "Статус идентификации",
                     options=[
                         "pending_operator_confirmation",
                         "linked_from_directory",
@@ -167,9 +167,9 @@ def render_event_journal(
                 link_note = st.text_area(
                     "Комментарий оператора",
                     key=f"event_link_note_{selected_id}",
-                    placeholder="Например: подтвержден по пропуску охраны или по журналу СКУД.",
+                    placeholder="Например: подтвержден оператором смены или сопоставлен с внешним контуром доступа.",
                 )
-                if st.button("Связать событие с сотрудником", key=f"event_link_submit_{selected_id}", width="stretch"):
+                if st.button("Связать инцидент с карточкой сотрудника", key=f"event_link_submit_{selected_id}", width="stretch"):
                     try:
                         link_event_to_employee_fn(
                             event_id=selected_id,
@@ -180,13 +180,13 @@ def render_event_journal(
                     except ValueError as exc:
                         st.error(str(exc))
                     else:
-                        st.success("Событие связано с карточкой сотрудника.")
+                        st.success("Инцидент связан с карточкой сотрудника.")
                         st.rerun()
     with image_col:
         with st.container(border=True):
-            st.markdown("**Snapshot / thumbnail**")
+            st.markdown("**Snapshot / evidence**")
             snapshot_path = selected_event.get("snapshot_path")
             if snapshot_path and Path(snapshot_path).exists():
                 st.image(snapshot_path, width="stretch", caption="Последний доступный кадр выбранного источника")
             else:
-                st.info("Для выбранного события отдельный snapshot пока не сохранен.")
+                st.info("Для выбранного инцидента отдельный snapshot пока не сохранен.")

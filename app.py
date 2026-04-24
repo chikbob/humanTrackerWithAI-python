@@ -1,4 +1,4 @@
-"""Streamlit entrypoint for the enterprise employee access monitoring system."""
+"""Streamlit entrypoint for the enterprise monitored-zone operations system."""
 
 from __future__ import annotations
 
@@ -160,10 +160,10 @@ def main():
     current_frame_skip = int(system_settings.get("frame_skip", 1))
 
     if standalone_live_mode:
-        section = "Онлайн-мониторинг"
+        section = "Оперативный мониторинг"
     else:
         section = sidebar_state["section"]
-    if section == "Дашборд":
+    if section == "Ситуационный центр":
         render_dashboard(
             st,
             events=events,
@@ -172,7 +172,7 @@ def main():
             access_points=access_points,
             employees=employees,
         )
-    elif section == "Онлайн-мониторинг":
+    elif section == "Оперативный мониторинг":
         model = load_model(sidebar_state["model_name"])
         _, class_meta = build_class_meta(model.names, ANIMAL_CLASSES)
         render_online_monitoring(
@@ -198,7 +198,7 @@ def main():
             standalone_mode=standalone_live_mode,
             standalone_overlay_enabled=standalone_overlay_enabled,
         )
-    elif section == "Сотрудники":
+    elif section == "Справочник персонала":
         render_employees(
             st,
             employees=employees,
@@ -210,14 +210,14 @@ def main():
             update_employee_fn=update_employee,
             update_employee_status_fn=update_employee_status,
         )
-    elif section == "Журнал событий":
+    elif section == "Журнал инцидентов":
         render_event_journal(
             st,
             events=events,
             employees=employees,
             link_event_to_employee_fn=link_event_to_employee,
         )
-    elif section == "Аналитика":
+    elif section == "Аналитика и отчеты":
         render_access_analytics(st, events=events, worker_statuses=worker_statuses)
     elif section == "Источники видео":
         render_video_sources(

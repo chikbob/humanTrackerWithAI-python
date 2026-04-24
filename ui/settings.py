@@ -105,7 +105,7 @@ def render_system_settings(
                 )
                 debug_mode = st.toggle("Режим отладки", value=str(settings.get("debug_mode", "0")) == "1")
                 active_access_point = st.selectbox(
-                    "Активная точка доступа",
+                    "Приоритетная зона контроля",
                     options=list(point_options.keys()) if point_options else ["не задана"],
                     index=list(point_options.keys()).index(default_point_name) if default_point_name in point_options else 0,
                 )

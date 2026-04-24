@@ -1,5 +1,5 @@
 def configure_page(st, *, standalone_mode: bool = False):
-    st.set_page_config(page_title="Система мониторинга прохода сотрудников", layout="wide")
+    st.set_page_config(page_title="Система интеллектуального мониторинга зон", layout="wide")
     st.markdown(
         """
         <style>
@@ -80,13 +80,13 @@ def configure_page(st, *, standalone_mode: bool = False):
     st.markdown(
         """
         <div class="access-shell">
-            <div class="access-badge">Enterprise Access Monitoring</div>
+            <div class="access-badge">Enterprise Zone Monitoring</div>
             <div class="access-badge">24/7 Video Pipeline</div>
-            <div class="access-badge">Neural Analytics</div>
-            <h1>Веб-система мониторинга прохода сотрудников на предприятии</h1>
+            <div class="access-badge">Incident Analytics</div>
+            <h1>Веб-система интеллектуального мониторинга контролируемых зон</h1>
             <p>
-                Интерфейс предназначен для мониторинга входной зоны предприятия, анализа событий доступа,
-                контроля состояния источников видео и последующей аналитической обработки журнала проходов.
+                Интерфейс предназначен для мониторинга камер и зон предприятия, автоматического выявления инцидентов,
+                контроля состояния источников видео и последующей аналитической обработки тревог и наблюдений.
             </p>
         </div>
         """,
