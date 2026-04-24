@@ -12,6 +12,7 @@ DEFAULT_UI_REFRESH_SECONDS = 2
 DEFAULT_EMPLOYEE_SYNC_INTERVAL = 300
 DEFAULT_TRACKER_TYPE = "bytetrack"
 DEFAULT_IDENTITY_BACKEND = "disabled"
+DEFAULT_NOTIFY_MIN_SEVERITY = "high"
 
 SOURCE_PROCESSING_DEFAULTS = {
     "enable_roi": True,
@@ -40,6 +41,13 @@ SYSTEM_SETTING_DEFAULTS = {
     "tracker_type": DEFAULT_TRACKER_TYPE,
     "identity_backend": DEFAULT_IDENTITY_BACKEND,
     "active_access_point_id": "",
+    "notifications_enabled": "0",
+    "incident_notify_min_severity": DEFAULT_NOTIFY_MIN_SEVERITY,
+    "webhook_enabled": "0",
+    "webhook_url": "",
+    "telegram_enabled": "0",
+    "telegram_bot_token": "",
+    "telegram_chat_id": "",
 }
 
 TRACKER_OPTIONS = {

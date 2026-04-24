@@ -29,6 +29,7 @@ from db.repository import (
     load_zones,
     load_zone_rules,
     load_incidents,
+    load_notification_deliveries,
     replace_employee_cache,
     reset_and_seed_demo_data,
     set_system_setting,
@@ -36,6 +37,7 @@ from db.repository import (
     set_zone_active,
     set_zone_rule_active,
     update_incident_status,
+    upsert_notification_delivery,
     link_event_to_employee,
     upsert_incident,
     upsert_employee_sync_state,
@@ -49,6 +51,7 @@ from services.employee_repository import build_employee_repository
 from services.employee_sync import maybe_sync_employee_directory
 from services.identity_service import build_identity_runtime_state
 from services.incidents import sync_incidents_from_events
+from services.notifications import process_incident_notifications
 from services.source_service import test_video_source_connection
 from services.state import init_session_state
 from ui.analytics_views import render_access_analytics
@@ -157,6 +160,12 @@ def main():
     events = enrich_event_rows(raw_events, video_sources, worker_statuses)
     sync_incidents_from_events(events, upsert_incident_fn=upsert_incident)
     incidents = load_incidents(limit=5000)
+    process_incident_notifications(
+        incidents=incidents,
+        settings=system_settings,
+        load_notification_deliveries_fn=load_notification_deliveries,
+        upsert_notification_delivery_fn=upsert_notification_delivery,
+    )
 
     if not standalone_live_mode:
         with st.container():

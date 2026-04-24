@@ -131,6 +131,67 @@ def render_system_settings(
         "При изменении критичных настроек источников рекомендуется перезапустить worker."
     )
     with st.container(border=True):
+        st.subheader("Уведомления и интеграции")
+        st.caption(
+            "Уведомления отправляются для новых и эскалированных инцидентов. "
+            "Повторная отправка по тому же каналу подавляется автоматически."
+        )
+        severity_options = ["low", "medium", "high", "critical"]
+        with st.form("notification_settings_form"):
+            notify_col1, notify_col2 = st.columns([1.0, 1.2])
+            with notify_col1:
+                notifications_enabled = st.toggle(
+                    "Включить уведомления",
+                    value=str(settings.get("notifications_enabled", "0")) == "1",
+                )
+                incident_notify_min_severity = st.selectbox(
+                    "Минимальная серьёзность",
+                    options=severity_options,
+                    index=severity_options.index(settings.get("incident_notify_min_severity", "high"))
+                    if settings.get("incident_notify_min_severity", "high") in severity_options
+                    else severity_options.index("high"),
+                )
+                webhook_enabled = st.toggle(
+                    "Webhook-уведомления",
+                    value=str(settings.get("webhook_enabled", "0")) == "1",
+                )
+                webhook_url = st.text_input(
+                    "Webhook URL",
+                    value=settings.get("webhook_url", ""),
+                    placeholder="https://example.com/hooks/incidents",
+                )
+            with notify_col2:
+                telegram_enabled = st.toggle(
+                    "Telegram-уведомления",
+                    value=str(settings.get("telegram_enabled", "0")) == "1",
+                )
+                telegram_bot_token = st.text_input(
+                    "Telegram bot token",
+                    value=settings.get("telegram_bot_token", ""),
+                    type="password",
+                    placeholder="123456:AA...",
+                )
+                telegram_chat_id = st.text_input(
+                    "Telegram chat ID",
+                    value=settings.get("telegram_chat_id", ""),
+                    placeholder="-1001234567890",
+                )
+                st.caption(
+                    "Для webhook используйте endpoint внешней системы. "
+                    "Для Telegram укажите bot token и chat ID канала или чата."
+                )
+            notification_submitted = st.form_submit_button("Сохранить каналы уведомлений")
+        if notification_submitted:
+            set_system_setting_fn(key="notifications_enabled", value="1" if notifications_enabled else "0")
+            set_system_setting_fn(key="incident_notify_min_severity", value=incident_notify_min_severity)
+            set_system_setting_fn(key="webhook_enabled", value="1" if webhook_enabled else "0")
+            set_system_setting_fn(key="webhook_url", value=webhook_url.strip())
+            set_system_setting_fn(key="telegram_enabled", value="1" if telegram_enabled else "0")
+            set_system_setting_fn(key="telegram_bot_token", value=telegram_bot_token.strip())
+            set_system_setting_fn(key="telegram_chat_id", value=telegram_chat_id.strip())
+            st.success("Настройки уведомлений сохранены.")
+            st.rerun()
+    with st.container(border=True):
         st.subheader("Сервисные операции с БД")
         st.caption(
             "Полная очистка базы предназначена для демонстрационного или production-bootstrap сценария. "

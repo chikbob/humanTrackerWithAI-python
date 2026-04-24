@@ -505,6 +505,23 @@ def init_db():
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS notification_deliveries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            incident_id INTEGER NOT NULL,
+            channel TEXT NOT NULL,
+            destination TEXT NOT NULL,
+            delivery_status TEXT NOT NULL DEFAULT 'pending',
+            last_error TEXT,
+            sent_at REAL,
+            created_at REAL,
+            updated_at REAL,
+            UNIQUE (incident_id, channel, destination),
+            FOREIGN KEY (incident_id) REFERENCES incidents(id)
+        )
+        """
+    )
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS benchmark_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             run_id INTEGER NOT NULL,
@@ -637,6 +654,20 @@ def init_db():
             ("employee_id", "employee_id INTEGER"),
             ("identification_status", "identification_status TEXT DEFAULT 'unlinked'"),
             ("started_at", "started_at REAL"),
+            ("updated_at", "updated_at REAL"),
+        ],
+    )
+    _ensure_columns(
+        conn,
+        "notification_deliveries",
+        [
+            ("incident_id", "incident_id INTEGER"),
+            ("channel", "channel TEXT NOT NULL DEFAULT 'webhook'"),
+            ("destination", "destination TEXT NOT NULL DEFAULT ''"),
+            ("delivery_status", "delivery_status TEXT NOT NULL DEFAULT 'pending'"),
+            ("last_error", "last_error TEXT"),
+            ("sent_at", "sent_at REAL"),
+            ("created_at", "created_at REAL"),
             ("updated_at", "updated_at REAL"),
         ],
     )
@@ -1513,6 +1544,30 @@ def load_incidents(*, limit: int | None = None):
     return [_normalize_incident_row(row) for row in rows]
 
 
+def load_notification_deliveries(*, incident_id: int | None = None):
+    conn = get_db_conn()
+    if incident_id is None:
+        rows = conn.execute(
+            """
+            SELECT id, incident_id, channel, destination, delivery_status, last_error, sent_at, created_at, updated_at
+            FROM notification_deliveries
+            ORDER BY created_at DESC, id DESC
+            """
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT id, incident_id, channel, destination, delivery_status, last_error, sent_at, created_at, updated_at
+            FROM notification_deliveries
+            WHERE incident_id = ?
+            ORDER BY created_at DESC, id DESC
+            """,
+            (int(incident_id),),
+        ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 def replace_employee_cache(employees: list[dict], *, source_system: str, synced_at=None):
     conn = get_db_conn()
     synced_at = synced_at or time.time()
@@ -2046,6 +2101,43 @@ def update_incident_status(
             "UPDATE incidents SET status = ?, operator_comment = ?, updated_at = ? WHERE id = ?",
             (normalized_status, operator_comment.strip(), now_ts, int(incident_id)),
         )
+    conn.commit()
+    conn.close()
+
+
+def upsert_notification_delivery(
+    *,
+    incident_id: int,
+    channel: str,
+    destination: str,
+    delivery_status: str,
+    last_error: str = "",
+    sent_at: float | None = None,
+):
+    now_ts = time.time()
+    conn = get_db_conn()
+    conn.execute(
+        """
+        INSERT INTO notification_deliveries (
+            incident_id, channel, destination, delivery_status, last_error, sent_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(incident_id, channel, destination) DO UPDATE SET
+            delivery_status = excluded.delivery_status,
+            last_error = excluded.last_error,
+            sent_at = excluded.sent_at,
+            updated_at = excluded.updated_at
+        """,
+        (
+            int(incident_id),
+            channel.strip(),
+            destination.strip(),
+            delivery_status.strip(),
+            last_error.strip(),
+            sent_at,
+            now_ts,
+            now_ts,
+        ),
+    )
     conn.commit()
     conn.close()
 
