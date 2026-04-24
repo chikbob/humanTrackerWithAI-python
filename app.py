@@ -12,6 +12,7 @@ from db.repository import (
     create_employee,
     create_video_source,
     create_zone,
+    create_zone_rule,
     db_insert_event,
     db_insert_frame,
     db_upsert_session,
@@ -26,17 +27,20 @@ from db.repository import (
     load_video_sources,
     load_worker_statuses,
     load_zones,
+    load_zone_rules,
     replace_employee_cache,
     reset_and_seed_demo_data,
     set_system_setting,
     set_video_source_active,
     set_zone_active,
+    set_zone_rule_active,
     link_event_to_employee,
     upsert_employee_sync_state,
     update_employee,
     update_employee_status,
     update_video_source,
     update_zone,
+    update_zone_rule,
 )
 from services.employee_repository import build_employee_repository
 from services.employee_sync import maybe_sync_employee_directory
@@ -144,6 +148,7 @@ def main():
     )
     worker_statuses = load_worker_statuses()
     zones = load_zones()
+    zone_rules = load_zone_rules()
     raw_events = load_events(limit=5000)
     events = enrich_event_rows(raw_events, video_sources, worker_statuses)
 
@@ -231,9 +236,13 @@ def main():
             video_sources=video_sources,
             worker_statuses=worker_statuses,
             zones=zones,
+            zone_rules=zone_rules,
             create_zone_fn=create_zone,
             update_zone_fn=update_zone,
             set_zone_active_fn=set_zone_active,
+            create_zone_rule_fn=create_zone_rule,
+            update_zone_rule_fn=update_zone_rule,
+            set_zone_rule_active_fn=set_zone_rule_active,
         )
     elif section == "Источники видео":
         render_video_sources(

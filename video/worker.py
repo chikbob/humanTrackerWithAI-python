@@ -12,11 +12,14 @@ from db.repository import (
     db_insert_event,
     load_active_video_sources,
     load_system_settings,
+    load_zone_rules,
+    load_zones,
     set_video_source_active,
     update_video_source_last_seen,
     upsert_worker_status,
 )
 from services.events import create_domain_entry_event
+from services.rules import build_effective_rule_profile
 from video.ingest import SourceIngestSession
 from video.pipeline import load_worker_model, process_source_frame
 from video.runtime import create_runtime_session, ensure_runtime_dirs, write_snapshot_atomic
@@ -151,27 +154,20 @@ class SourceWorker:
             self.source_sessions[source_id] = session
 
         source_config = normalize_source_processing_config(source)
-        roi_config = {
-            "enable_roi": source_config["enable_roi"],
-            "roi_x": source_config["roi_x"],
-            "roi_y": source_config["roi_y"],
-            "roi_w": source_config["roi_w"],
-            "roi_h": source_config["roi_h"],
-        }
-        event_settings = {
-            "rule_count_enabled": source_config["rule_count_enabled"],
-            "rule_class": "person",
-            "rule_n": source_config["rule_n"],
-            "rule_t": source_config["rule_t"],
-            "rule_disappear_enabled": source_config["rule_disappear_enabled"],
-            "rule_disappear_seconds": source_config["rule_disappear_seconds"],
-            "enable_notifications": False,
-            "notify_conf_threshold": settings["confidence_threshold"],
-            "notify_classes": ["person"],
-            "enable_roi": source_config["enable_roi"],
-            "default_access_point_id": settings["default_access_point_id"],
-            "prolonged_presence_seconds": source_config["prolonged_presence_seconds"],
-        }
+        active_zones = load_zones(source_id=source_id)
+        active_rules = load_zone_rules(source_id=source_id)
+        rule_profile = build_effective_rule_profile(source=source, zones=active_zones, zone_rules=active_rules)
+        roi_config = rule_profile["roi_config"]
+        event_settings = rule_profile["event_settings"]
+        event_settings.update(
+            {
+                "notify_conf_threshold": settings["confidence_threshold"],
+                "notify_classes": ["person"],
+                "default_access_point_id": settings["default_access_point_id"],
+                # Keep source-level config as fallback metadata for legacy behavior and future rules.
+                "legacy_source_config": source_config,
+            }
+        )
 
         frame_rgb, detections, processing_time_ms = process_source_frame(
             frame_bgr=frame,

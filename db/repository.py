@@ -124,6 +124,13 @@ def _zone_select_columns() -> str:
     """
 
 
+def _zone_rule_select_columns() -> str:
+    return """
+        zr.id, zr.zone_id, zr.rule_type, zr.threshold_seconds, zr.threshold_count, zr.cooldown_seconds,
+        zr.is_active, zr.severity, zr.description, zr.created_at, z.source_id
+    """
+
+
 def normalize_zone_config(zone: dict | None = None) -> dict:
     zone = zone or {}
     normalized = {
@@ -149,6 +156,30 @@ def _normalize_zone_row(row: dict | sqlite3.Row) -> dict:
     zone["source_id"] = int(zone["source_id"])
     zone["id"] = int(zone["id"])
     return zone
+
+
+def normalize_zone_rule_config(rule: dict | None = None) -> dict:
+    rule = rule or {}
+    normalized = {
+        "rule_type": (rule.get("rule_type") or "person_in_zone").strip() or "person_in_zone",
+        "threshold_seconds": max(1, int(rule.get("threshold_seconds", 10))),
+        "threshold_count": max(1, int(rule.get("threshold_count", 3))),
+        "cooldown_seconds": max(0, int(rule.get("cooldown_seconds", 5))),
+        "is_active": bool(rule.get("is_active", True)),
+        "severity": (rule.get("severity") or "medium").strip() or "medium",
+        "description": (rule.get("description") or "").strip(),
+    }
+    return normalized
+
+
+def _normalize_zone_rule_row(row: dict | sqlite3.Row) -> dict:
+    rule = dict(row)
+    rule.update(normalize_zone_rule_config(rule))
+    rule["zone_id"] = int(rule["zone_id"])
+    rule["id"] = int(rule["id"])
+    if rule.get("source_id") is not None:
+        rule["source_id"] = int(rule["source_id"])
+    return rule
 
 
 def _normalize_video_source_row(row: dict | sqlite3.Row) -> dict:
@@ -401,6 +432,23 @@ def init_db():
     )
     cur.execute(
         """
+        CREATE TABLE IF NOT EXISTS zone_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            zone_id INTEGER NOT NULL,
+            rule_type TEXT NOT NULL DEFAULT 'person_in_zone',
+            threshold_seconds INTEGER DEFAULT 10,
+            threshold_count INTEGER DEFAULT 3,
+            cooldown_seconds INTEGER DEFAULT 5,
+            is_active INTEGER DEFAULT 1,
+            severity TEXT DEFAULT 'medium',
+            description TEXT,
+            created_at REAL,
+            FOREIGN KEY (zone_id) REFERENCES zones(id)
+        )
+        """
+    )
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS benchmark_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             run_id INTEGER NOT NULL,
@@ -500,6 +548,21 @@ def init_db():
             ("created_at", "created_at REAL"),
             ("completed_at", "completed_at REAL"),
             ("status", "status TEXT"),
+        ],
+    )
+    _ensure_columns(
+        conn,
+        "zone_rules",
+        [
+            ("zone_id", "zone_id INTEGER"),
+            ("rule_type", "rule_type TEXT NOT NULL DEFAULT 'person_in_zone'"),
+            ("threshold_seconds", "threshold_seconds INTEGER DEFAULT 10"),
+            ("threshold_count", "threshold_count INTEGER DEFAULT 3"),
+            ("cooldown_seconds", "cooldown_seconds INTEGER DEFAULT 5"),
+            ("is_active", "is_active INTEGER DEFAULT 1"),
+            ("severity", "severity TEXT DEFAULT 'medium'"),
+            ("description", "description TEXT"),
+            ("created_at", "created_at REAL"),
         ],
     )
     _ensure_columns(
@@ -1320,6 +1383,31 @@ def load_zones(*, source_id: int | None = None):
     return [_normalize_zone_row(row) for row in rows]
 
 
+def load_zone_rules(*, source_id: int | None = None, zone_id: int | None = None):
+    conn = get_db_conn()
+    where_clauses = []
+    params = []
+    if source_id is not None:
+        where_clauses.append("z.source_id = ?")
+        params.append(int(source_id))
+    if zone_id is not None:
+        where_clauses.append("zr.zone_id = ?")
+        params.append(int(zone_id))
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    rows = conn.execute(
+        f"""
+        SELECT {_zone_rule_select_columns()}
+        FROM zone_rules zr
+        JOIN zones z ON z.id = zr.zone_id
+        {where_sql}
+        ORDER BY zr.is_active DESC, zr.zone_id ASC, zr.rule_type ASC
+        """,
+        tuple(params),
+    ).fetchall()
+    conn.close()
+    return [_normalize_zone_rule_row(row) for row in rows]
+
+
 def replace_employee_cache(employees: list[dict], *, source_system: str, synced_at=None):
     conn = get_db_conn()
     synced_at = synced_at or time.time()
@@ -1542,6 +1630,52 @@ def create_zone(
     conn.close()
 
 
+def create_zone_rule(
+    *,
+    zone_id: int,
+    rule_type: str,
+    threshold_seconds: int = 10,
+    threshold_count: int = 3,
+    cooldown_seconds: int = 5,
+    is_active: bool = True,
+    severity: str = "medium",
+    description: str = "",
+):
+    config = normalize_zone_rule_config(
+        {
+            "rule_type": rule_type,
+            "threshold_seconds": threshold_seconds,
+            "threshold_count": threshold_count,
+            "cooldown_seconds": cooldown_seconds,
+            "is_active": is_active,
+            "severity": severity,
+            "description": description,
+        }
+    )
+    conn = get_db_conn()
+    conn.execute(
+        """
+        INSERT INTO zone_rules (
+            zone_id, rule_type, threshold_seconds, threshold_count, cooldown_seconds,
+            is_active, severity, description, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(zone_id),
+            config["rule_type"],
+            config["threshold_seconds"],
+            config["threshold_count"],
+            config["cooldown_seconds"],
+            1 if config["is_active"] else 0,
+            config["severity"],
+            config["description"],
+            time.time(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
 def update_video_source(
     *,
     source_id: int,
@@ -1657,6 +1791,50 @@ def update_zone(
     conn.close()
 
 
+def update_zone_rule(
+    *,
+    rule_id: int,
+    zone_id: int,
+    rule_type: str,
+    threshold_seconds: int,
+    threshold_count: int,
+    cooldown_seconds: int,
+    severity: str,
+    description: str = "",
+):
+    config = normalize_zone_rule_config(
+        {
+            "rule_type": rule_type,
+            "threshold_seconds": threshold_seconds,
+            "threshold_count": threshold_count,
+            "cooldown_seconds": cooldown_seconds,
+            "severity": severity,
+            "description": description,
+        }
+    )
+    conn = get_db_conn()
+    conn.execute(
+        """
+        UPDATE zone_rules
+        SET zone_id = ?, rule_type = ?, threshold_seconds = ?, threshold_count = ?, cooldown_seconds = ?,
+            severity = ?, description = ?
+        WHERE id = ?
+        """,
+        (
+            int(zone_id),
+            config["rule_type"],
+            config["threshold_seconds"],
+            config["threshold_count"],
+            config["cooldown_seconds"],
+            config["severity"],
+            config["description"],
+            int(rule_id),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
 def set_video_source_active(*, source_id: int, is_active: bool):
     conn = get_db_conn()
     conn.execute("UPDATE video_sources SET is_active = ? WHERE id = ?", (1 if is_active else 0, source_id))
@@ -1667,6 +1845,13 @@ def set_video_source_active(*, source_id: int, is_active: bool):
 def set_zone_active(*, zone_id: int, is_active: bool):
     conn = get_db_conn()
     conn.execute("UPDATE zones SET is_active = ? WHERE id = ?", (1 if is_active else 0, int(zone_id)))
+    conn.commit()
+    conn.close()
+
+
+def set_zone_rule_active(*, rule_id: int, is_active: bool):
+    conn = get_db_conn()
+    conn.execute("UPDATE zone_rules SET is_active = ? WHERE id = ?", (1 if is_active else 0, int(rule_id)))
     conn.commit()
     conn.close()
 

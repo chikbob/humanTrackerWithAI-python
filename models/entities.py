@@ -43,6 +43,20 @@ class Zone:
 
 
 @dataclass
+class ZoneRule:
+    id: Optional[int]
+    zone_id: int
+    rule_type: str
+    threshold_seconds: int
+    threshold_count: int
+    cooldown_seconds: int
+    is_active: bool
+    severity: str
+    description: str
+    created_at: Optional[float]
+
+
+@dataclass
 class SystemSetting:
     key: str
     value: str
