@@ -35,7 +35,8 @@ from db.repository import (
     update_video_source,
 )
 from services.employee_repository import build_employee_repository
-from services.employee_sync import build_identity_gallery_state, maybe_sync_employee_directory
+from services.employee_sync import maybe_sync_employee_directory
+from services.identity_service import build_identity_runtime_state
 from services.source_service import test_video_source_connection
 from services.state import init_session_state
 from ui.analytics_views import render_access_analytics
@@ -130,7 +131,12 @@ def main():
     if sync_triggered:
         employee_sync_state = employee_repository.get_status()
         employees = employee_repository.list_employees()
-    st.session_state.identity_gallery_state = build_identity_gallery_state(employees, employee_sync_state)
+    identity_backend = system_settings.get("identity_backend", "disabled")
+    st.session_state.identity_gallery_state = build_identity_runtime_state(
+        employees=employees,
+        sync_state=employee_sync_state,
+        identity_backend=identity_backend,
+    )
     worker_statuses = load_worker_statuses()
     raw_events = load_events(limit=5000)
     events = enrich_event_rows(raw_events, video_sources, worker_statuses)
@@ -180,6 +186,7 @@ def main():
             inference_size=current_inference_size,
             conf_threshold=current_confidence,
             frame_skip=current_frame_skip,
+            tracker_type=system_settings.get("tracker_type", "bytetrack"),
             access_point_name=current_access_point_name,
             session_state=st.session_state,
             db_insert_event=db_insert_event,

@@ -10,6 +10,8 @@ DEFAULT_SOURCE_TIMEOUT = 15
 DEFAULT_DEBUG_MODE = False
 DEFAULT_UI_REFRESH_SECONDS = 2
 DEFAULT_EMPLOYEE_SYNC_INTERVAL = 300
+DEFAULT_TRACKER_TYPE = "bytetrack"
+DEFAULT_IDENTITY_BACKEND = "disabled"
 
 SOURCE_PROCESSING_DEFAULTS = {
     "enable_roi": True,
@@ -35,12 +37,57 @@ SYSTEM_SETTING_DEFAULTS = {
     "employee_sync_interval": str(DEFAULT_EMPLOYEE_SYNC_INTERVAL),
     "debug_mode": "0",
     "model_name": DEFAULT_MODEL_NAME,
+    "tracker_type": DEFAULT_TRACKER_TYPE,
+    "identity_backend": DEFAULT_IDENTITY_BACKEND,
     "active_access_point_id": "",
+}
+
+TRACKER_OPTIONS = {
+    "bytetrack": {"label": "ByteTrack", "tracker_config": "bytetrack.yaml", "use_tracking": True},
+    "botsort": {"label": "BoT-SORT", "tracker_config": "botsort.yaml", "use_tracking": True},
+    "detect_only": {"label": "Только детекция", "tracker_config": None, "use_tracking": False},
+}
+
+IDENTITY_BACKEND_OPTIONS = {
+    "disabled": {"label": "Отключено"},
+    "face_placeholder": {"label": "Face pipeline placeholder"},
+    "reid_placeholder": {"label": "ReID pipeline placeholder"},
 }
 
 
 def build_default_source_processing_config() -> dict:
     return SOURCE_PROCESSING_DEFAULTS.copy()
+
+
+def normalize_tracker_type(value: str | None) -> str:
+    tracker_type = (value or DEFAULT_TRACKER_TYPE).strip().lower()
+    return tracker_type if tracker_type in TRACKER_OPTIONS else DEFAULT_TRACKER_TYPE
+
+
+def build_tracker_runtime_config(tracker_type: str | None) -> dict:
+    tracker_key = normalize_tracker_type(tracker_type)
+    config = TRACKER_OPTIONS[tracker_key]
+    return {
+        "tracker_type": tracker_key,
+        "tracker_label": config["label"],
+        "tracker_config": config["tracker_config"],
+        "use_tracking": config["use_tracking"],
+    }
+
+
+def normalize_identity_backend(value: str | None) -> str:
+    backend = (value or DEFAULT_IDENTITY_BACKEND).strip().lower()
+    return backend if backend in IDENTITY_BACKEND_OPTIONS else DEFAULT_IDENTITY_BACKEND
+
+
+def build_identity_backend_config(value: str | None) -> dict:
+    backend_key = normalize_identity_backend(value)
+    config = IDENTITY_BACKEND_OPTIONS[backend_key]
+    return {
+        "backend": backend_key,
+        "label": config["label"],
+        "enabled": backend_key != "disabled",
+    }
 
 
 def normalize_source_processing_config(source: dict | None = None) -> dict:

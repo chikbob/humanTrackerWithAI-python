@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from config.app_config import build_identity_backend_config
+
 
 IDENTIFICATION_STATUSES = {
     "no_reference_data",
@@ -35,6 +37,14 @@ def get_identity_placeholder_result(identity_state: Optional[dict] = None) -> di
     }
 
 
+def get_disabled_identity_result() -> dict:
+    return {
+        "identified_employee_id": None,
+        "identification_confidence": None,
+        "identification_status": "unlinked",
+    }
+
+
 def resolve_identification_status(identity_state: Optional[dict] = None) -> str:
     """Map the current employee directory state to an honest identification status."""
     if not identity_state:
@@ -54,7 +64,12 @@ def resolve_identification_status(identity_state: Optional[dict] = None) -> str:
         return "no_reference_data"
     if reference_employee_count < min(active_employee_count, 3):
         return "not_enough_reference_data"
-        return "unknown"
+    return "unknown"
+
+
+def resolve_identity_backend(identity_state: Optional[dict] = None) -> dict:
+    identity_state = identity_state or {}
+    return build_identity_backend_config(identity_state.get("identity_backend"))
 
 
 def build_identity_result(
@@ -150,6 +165,10 @@ def identify_person(
     - if future face recognition pieces are configured, this function becomes
       the single orchestration entry point.
     """
+    backend = resolve_identity_backend(identity_state)
+    if not backend["enabled"]:
+        return get_disabled_identity_result()
+
     face = detect_face(frame_bgr, detection=detection)
     if face is None:
         return get_identity_placeholder_result(identity_state)
@@ -166,3 +185,26 @@ def identify_person(
         confidence=matched_employee.get("confidence"),
         identity_state=identity_state,
     )
+
+
+def build_identity_runtime_state(
+    *,
+    employees: list[dict],
+    sync_state: dict | None,
+    identity_backend: str,
+) -> dict:
+    sync_state = sync_state or {}
+    backend = build_identity_backend_config(identity_backend)
+    active_employees = [employee for employee in employees if employee.get("status") == "active"]
+    referenced_employees = [employee for employee in active_employees if int(employee.get("reference_count") or 0) > 0]
+    return {
+        "employee_count": len(employees),
+        "active_employee_count": len(active_employees),
+        "reference_employee_count": len(referenced_employees),
+        "directory_source": sync_state.get("data_source", "sqlite"),
+        "sync_status": sync_state.get("sync_status", "unknown"),
+        "sync_error": sync_state.get("last_error", ""),
+        "identity_backend": backend["backend"],
+        "identity_backend_label": backend["label"],
+        "identity_backend_enabled": backend["enabled"],
+    }

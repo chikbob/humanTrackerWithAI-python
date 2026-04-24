@@ -5,6 +5,9 @@ import streamlit as st
 from ultralytics import YOLO
 from typing import Optional
 
+from config.app_config import DEFAULT_TRACKER_TYPE
+from core.tracking import run_detection_with_optional_tracking
+
 
 @st.cache_resource(show_spinner=False)
 def load_model(model_path: str):
@@ -85,18 +88,17 @@ def detect_and_annotate(
     process_disappeared_fn,
     draw_box_fn,
     warning_callback=None,
+    tracker_type: str = DEFAULT_TRACKER_TYPE,
 ):
     t0 = time.time()
     if use_tracking:
         try:
-            results = model.track(
+            results = run_detection_with_optional_tracking(
+                model,
                 frame_bgr,
-                imgsz=inference_size,
-                conf=conf_threshold,
-                iou=0.5,
-                persist=True,
-                tracker="bytetrack.yaml",
-                verbose=False,
+                tracker_type=tracker_type,
+                inference_size=inference_size,
+                conf_threshold=conf_threshold,
             )
         except ModuleNotFoundError:
             if warning_callback is not None:
@@ -227,17 +229,16 @@ def track_and_draw_live(
     track_classes: list[str],
     roi_config: dict,
     draw_box_fn,
+    tracker_type: str = DEFAULT_TRACKER_TYPE,
 ):
     """Low-risk visual tracking for browser live monitoring without DB side effects."""
     try:
-        results = model.track(
+        results = run_detection_with_optional_tracking(
+            model,
             frame_bgr,
-            imgsz=inference_size,
-            conf=conf_threshold,
-            iou=0.5,
-            persist=True,
-            tracker="bytetrack.yaml",
-            verbose=False,
+            tracker_type=tracker_type,
+            inference_size=inference_size,
+            conf_threshold=conf_threshold,
         )
     except ModuleNotFoundError:
         return detect_and_draw_live(

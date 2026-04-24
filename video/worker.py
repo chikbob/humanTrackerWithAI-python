@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import cv2
 
-from config.app_config import SYSTEM_SETTING_DEFAULTS, normalize_source_processing_config
+from config.app_config import SYSTEM_SETTING_DEFAULTS, normalize_source_processing_config, normalize_tracker_type
 from db.repository import (
     db_insert_event,
     load_active_video_sources,
@@ -63,6 +63,7 @@ class SourceWorker:
             "reconnect_interval": int(settings["reconnect_interval"]),
             "source_timeout": int(settings["source_timeout"]),
             "model_name": settings["model_name"],
+            "tracker_type": normalize_tracker_type(settings.get("tracker_type")),
             "default_access_point_id": int(settings["active_access_point_id"]) if settings["active_access_point_id"] else None,
         }
 
@@ -166,6 +167,7 @@ class SourceWorker:
             inference_size=settings["inference_size"],
             roi_config=roi_config,
             event_settings=event_settings,
+            tracker_type=settings["tracker_type"],
         )
         snapshot_path = build_snapshot_path(source_id)
         cv2.imwrite(snapshot_path, cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))

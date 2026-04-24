@@ -7,6 +7,8 @@ import time
 import cv2
 from ultralytics import YOLO
 
+from config.app_config import DEFAULT_TRACKER_TYPE
+from core.tracking import run_detection_with_optional_tracking
 from services.events import process_disappeared_tracks, register_detection_and_entry_events
 
 
@@ -26,17 +28,16 @@ def process_source_frame(
     inference_size: int,
     roi_config: dict,
     event_settings: dict,
+    tracker_type: str = DEFAULT_TRACKER_TYPE,
 ):
     """Process one frame from a production source and return an annotated image."""
     start_ts = time.time()
-    results = model.track(
+    results = run_detection_with_optional_tracking(
+        model,
         frame_bgr,
-        imgsz=inference_size,
-        conf=conf_threshold,
-        iou=0.5,
-        persist=True,
-        tracker="bytetrack.yaml",
-        verbose=False,
+        tracker_type=tracker_type,
+        inference_size=inference_size,
+        conf_threshold=conf_threshold,
     )
     processing_time_ms = (time.time() - start_ts) * 1000.0
 

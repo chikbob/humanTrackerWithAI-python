@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from config.app_config import DEFAULT_MODEL_NAME
+from config.app_config import (
+    DEFAULT_IDENTITY_BACKEND,
+    DEFAULT_MODEL_NAME,
+    DEFAULT_TRACKER_TYPE,
+    IDENTITY_BACKEND_OPTIONS,
+    TRACKER_OPTIONS,
+)
 from ui.sidebar import MODEL_OPTIONS
 
 
@@ -81,6 +87,22 @@ def render_system_settings(
                     if settings.get("model_name", DEFAULT_MODEL_NAME) in MODEL_OPTIONS
                     else 1,
                 )
+                tracker_type = st.selectbox(
+                    "Трекинг-стратегия",
+                    options=list(TRACKER_OPTIONS.keys()),
+                    index=list(TRACKER_OPTIONS.keys()).index(settings.get("tracker_type", DEFAULT_TRACKER_TYPE))
+                    if settings.get("tracker_type", DEFAULT_TRACKER_TYPE) in TRACKER_OPTIONS
+                    else 0,
+                    format_func=lambda key: TRACKER_OPTIONS[key]["label"],
+                )
+                identity_backend = st.selectbox(
+                    "Identity backend",
+                    options=list(IDENTITY_BACKEND_OPTIONS.keys()),
+                    index=list(IDENTITY_BACKEND_OPTIONS.keys()).index(settings.get("identity_backend", DEFAULT_IDENTITY_BACKEND))
+                    if settings.get("identity_backend", DEFAULT_IDENTITY_BACKEND) in IDENTITY_BACKEND_OPTIONS
+                    else 0,
+                    format_func=lambda key: IDENTITY_BACKEND_OPTIONS[key]["label"],
+                )
                 debug_mode = st.toggle("Режим отладки", value=str(settings.get("debug_mode", "0")) == "1")
                 active_access_point = st.selectbox(
                     "Активная точка доступа",
@@ -97,6 +119,8 @@ def render_system_settings(
             set_system_setting_fn(key="source_timeout", value=str(source_timeout))
             set_system_setting_fn(key="employee_sync_interval", value=str(employee_sync_interval))
             set_system_setting_fn(key="model_name", value=model_name)
+            set_system_setting_fn(key="tracker_type", value=tracker_type)
+            set_system_setting_fn(key="identity_backend", value=identity_backend)
             set_system_setting_fn(key="debug_mode", value="1" if debug_mode else "0")
             if point_options:
                 set_system_setting_fn(key="active_access_point_id", value=str(point_options[active_access_point]))
