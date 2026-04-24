@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import os
 import sys
 import tempfile
@@ -495,7 +496,7 @@ def render_online_monitoring(
         with control_col4:
             session_state.monitoring_embed_secondary_live = st.toggle(
                 "Встроить доп. live",
-                value=bool(session_state.get("monitoring_embed_secondary_live", True)),
+                value=bool(session_state.get("monitoring_embed_secondary_live", False)),
                 help="Дополнительные browser/local источники будут открываться как встроенные standalone-view. Это тяжелее по ресурсам, но позволяет видеть несколько интерактивных камер сразу.",
             )
     selected_bindings = _prioritize_primary_binding(selected_bindings, primary_binding)
@@ -697,8 +698,11 @@ def render_online_monitoring(
 
 def _build_source_bindings(active_sources: list[dict], statuses_by_id: dict) -> list[dict]:
     bindings = []
+    has_browser_source = False
     for source in active_sources:
         binding_kind = "browser_camera" if source["source_type"] == "browser_camera" else "production"
+        if binding_kind == "browser_camera":
+            has_browser_source = True
         bindings.append(
             {
                 "source_id": source["id"],
@@ -710,17 +714,18 @@ def _build_source_bindings(active_sources: list[dict], statuses_by_id: dict) -> 
                 "label": f"{source['name']} [{source['source_type']}]",
             }
         )
-    bindings.append(
-        {
-            "source_id": "browser-live",
-            "kind": "browser_camera",
-            "kind_label": "browser_camera",
-            "source": None,
-            "status": {},
-            "name": "Браузерная камера",
-            "label": "Браузерная камера",
-        }
-    )
+    if not has_browser_source:
+        bindings.append(
+            {
+                "source_id": "browser-live",
+                "kind": "browser_camera",
+                "kind_label": "browser_camera",
+                "source": None,
+                "status": {},
+                "name": "Браузерная камера",
+                "label": "Браузерная камера",
+            }
+        )
     bindings.append(
         {
             "source_id": "local-macbook",
@@ -994,24 +999,26 @@ def _render_source_tile(
             unsafe_allow_html=True,
         )
         if binding["kind"] == "production" and binding["source"] is not None:
-            snapshot_path = binding["status"].get("last_snapshot_path")
-            if snapshot_path and Path(snapshot_path).exists():
-                st.image(snapshot_path, width="stretch")
-            else:
+            if not _render_snapshot_image(
+                st,
+                session_state=session_state,
+                cache_key=f"monitoring_snapshot_{binding['source_id']}",
+                snapshot_path=binding["status"].get("last_snapshot_path"),
+            ):
                 st.info("Worker еще не сохранил snapshot для этого источника.")
             if source_card.get("last_error"):
                 st.markdown(f'<div class="compact-caption">Ошибка: {source_card["last_error"]}</div>', unsafe_allow_html=True)
             return
 
         if not is_primary:
-            if embed_secondary_live:
+            if embed_secondary_live and binding["kind"] == "production":
                 _render_embedded_live_source(st, binding)
-                st.markdown(
-                    f'<a href="{_build_live_window_url(binding, overlay_enabled=False)}" target="_blank" rel="noopener noreferrer">Открыть этот источник в чистом окне</a>',
-                    unsafe_allow_html=True,
-                )
             else:
-                _render_embedded_live_source(st, binding)
+                _render_secondary_source_placeholder(st, binding)
+            st.markdown(
+                f'<a href="{_build_live_window_url(binding, overlay_enabled=False)}" target="_blank" rel="noopener noreferrer">Открыть этот источник в чистом окне</a>',
+                unsafe_allow_html=True,
+            )
             return
 
         if binding["kind"] == "browser_camera":
@@ -1064,6 +1071,40 @@ def _render_embedded_live_source(st, binding: dict):
         """,
         height=430,
     )
+
+
+def _render_secondary_source_placeholder(st, binding: dict):
+    kind_label = _format_source_kind_label(binding["kind_label"])
+    if binding["kind"] == "browser_camera":
+        st.info(
+            f"{kind_label}: встроенный preview в общей стене намеренно отключён. "
+            "Открой источник в отдельном окне, чтобы браузер мог корректно запросить доступ к камере."
+        )
+        return
+    if binding["kind"] == "local_camera":
+        st.info(
+            f"{kind_label}: локальную камеру лучше открывать в отдельном окне. "
+            "Внутри общей стены она нестабильна и конфликтует с foreground-loop."
+        )
+        return
+    st.info(f"{kind_label}: предпросмотр недоступен в embedded-режиме.")
+
+
+def _render_snapshot_image(st, *, session_state, cache_key: str, snapshot_path: str | None) -> bool:
+    if snapshot_path and Path(snapshot_path).exists():
+        try:
+            image_bytes = Path(snapshot_path).read_bytes()
+            image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            session_state[cache_key] = image.copy()
+            st.image(image, width="stretch")
+            return True
+        except Exception:
+            pass
+    cached_image = session_state.get(cache_key)
+    if cached_image is not None:
+        st.image(cached_image, width="stretch")
+        return True
+    return False
 
 
 def _render_production_live_monitor(st, *, source: dict, source_status: dict, standalone_mode: bool = False):
