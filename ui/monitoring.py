@@ -1429,10 +1429,25 @@ def _render_local_camera_monitor(
         with st.expander("Диагностика локальной камеры", expanded=False):
             st.dataframe(pd.DataFrame(_probe_camera_backends(int(camera_index))), width="stretch", hide_index=True)
     else:
-        session_state.local_camera_running = True
+        state_col1, state_col2, state_col3 = st.columns([0.95, 0.95, 1.2])
+        with state_col1:
+            if st.button("Активировать камеру", key="live_local_camera_activate", disabled=bool(session_state.local_camera_running)):
+                session_state.local_camera_running = True
+        with state_col2:
+            if st.button("Деактивировать камеру", key="live_local_camera_deactivate", disabled=not bool(session_state.local_camera_running)):
+                session_state.local_camera_running = False
+                finish_session(session_state, db_upsert_session)
+        with state_col3:
+            state_label = "active" if session_state.local_camera_running else "inactive"
+            st.metric("Состояние камеры", state_label)
+        if session_state.get("local_camera_last_frame_at"):
+            st.caption(
+                f"Последний захват: {_fmt_ts(session_state.get('local_camera_last_frame_at'))} • "
+                "данные уже сохранены в БД и остаются в аналитике после деактивации."
+            )
 
     if not session_state.local_camera_running:
-        st.info("Запустите локальную камеру для непрерывного мониторинга.")
+        st.info("Активируйте камеру MacBook, когда нужно возобновить live-мониторинг. Уже накопленные события и графики сохраняются.")
         return session_state.get("local_camera_last_frame_at")
 
     cap, backend_meta = _open_camera_capture(int(camera_index), backend_key=backend_key)
