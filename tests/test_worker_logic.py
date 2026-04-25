@@ -1,10 +1,16 @@
 import time
 import unittest
+import importlib.util
 from unittest.mock import patch
+from collections import deque
 
-from video.worker import SourceWorker
+CV2_AVAILABLE = importlib.util.find_spec("cv2") is not None
+
+if CV2_AVAILABLE:
+    from video.worker import SourceWorker
 
 
+@unittest.skipUnless(CV2_AVAILABLE, "opencv-python is not installed")
 class WorkerLogicTests(unittest.TestCase):
     def test_handle_stream_failure_suppresses_duplicate_offline_event(self):
         worker = SourceWorker()
@@ -48,6 +54,51 @@ class WorkerLogicTests(unittest.TestCase):
 
         worker._process_source(source, settings)
         self.assertIn("reconnecting", written)
+
+    def test_flush_ready_incident_evidence_attaches_clip(self):
+        worker = SourceWorker()
+        source = {"id": 7, "name": "Gate 7", "source_type": "rtsp", "source_url": "rtsp://gate-7"}
+        session = {
+            "id": "worker-7-demo",
+            "evidence_buffer": deque(
+                [
+                    {"timestamp": 100.0, "frame_bgr": "frame-1"},
+                    {"timestamp": 101.0, "frame_bgr": "frame-2"},
+                    {"timestamp": 102.0, "frame_bgr": "frame-3"},
+                ]
+            ),
+            "pending_evidence_jobs": [
+                {
+                    "event_id": "evt-77",
+                    "event_ts": 101.0,
+                    "snapshot_path": "/tmp/incident.jpg",
+                    "retention_until": 500.0,
+                    "target_ready_ts": 102.0,
+                }
+            ],
+        }
+        settings = {
+            "incident_evidence_pre_seconds": 1,
+            "incident_evidence_post_seconds": 1,
+            "incident_evidence_fps": 4,
+        }
+        attached = []
+
+        with patch("video.worker.collect_evidence_frames", return_value=["frame-1", "frame-2"]) as collect_mock, patch(
+            "video.worker.write_evidence_clip_atomic",
+            return_value="/tmp/incident.mp4",
+        ) as write_mock, patch(
+            "video.worker.attach_event_evidence",
+            side_effect=lambda **kwargs: attached.append(kwargs),
+        ):
+            worker._flush_ready_incident_evidence(source, session, settings, now_ts=103.0)
+
+        collect_mock.assert_called_once()
+        write_mock.assert_called_once()
+        self.assertEqual(len(attached), 1)
+        self.assertEqual(attached[0]["event_id"], "evt-77")
+        self.assertEqual(attached[0]["evidence_clip_path"], "/tmp/incident.mp4")
+        self.assertEqual(session["pending_evidence_jobs"], [])
 
 
 if __name__ == "__main__":

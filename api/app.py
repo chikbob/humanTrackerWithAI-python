@@ -128,6 +128,9 @@ def create_app() -> FastAPI:
         incident_id: int,
         status: str = Query(..., min_length=1),
         operator_comment: str = "",
+        assigned_to: str = "",
+        resolution_code: str = "",
+        resolution_notes: str = "",
         actor_name: str = "api",
         actor_role: str = "admin",
     ):
@@ -138,6 +141,9 @@ def create_app() -> FastAPI:
             incident_id=incident_id,
             status=status,
             operator_comment=operator_comment,
+            assigned_to=assigned_to,
+            resolution_code=resolution_code,
+            resolution_notes=resolution_notes,
         )
         append_audit_log(
             actor_name=actor_name,
@@ -145,12 +151,21 @@ def create_app() -> FastAPI:
             action="incident.status_updated",
             resource_type="incident",
             resource_id=str(incident_id),
-            details={"status": status, "operator_comment": operator_comment},
+            details={
+                "status": status,
+                "operator_comment": operator_comment,
+                "assigned_to": assigned_to,
+                "resolution_code": resolution_code,
+                "resolution_notes": resolution_notes,
+            },
         )
         return {
             "incident_id": incident_id,
             "status": status,
             "operator_comment": operator_comment,
+            "assigned_to": assigned_to,
+            "resolution_code": resolution_code,
+            "resolution_notes": resolution_notes,
         }
 
     @app.put("/api/v1/events/{event_id}/link")

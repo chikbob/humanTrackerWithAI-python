@@ -136,6 +136,11 @@ def _build_incident_payload(incident: dict) -> dict:
         "zone_name": incident.get("zone_name"),
         "confidence": incident.get("confidence"),
         "snapshot_path": incident.get("snapshot_path"),
+        "evidence_clip_path": incident.get("evidence_clip_path"),
+        "assigned_to": incident.get("assigned_to"),
+        "acknowledged_at": incident.get("acknowledged_at"),
+        "resolved_at": incident.get("resolved_at"),
+        "resolution_code": incident.get("resolution_code"),
         "started_at": incident.get("started_at"),
         "updated_at": incident.get("updated_at"),
     }

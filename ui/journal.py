@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from services.incidents import INCIDENT_STATUS_OPTIONS
+from services.incidents import INCIDENT_RESOLUTION_OPTIONS, INCIDENT_STATUS_OPTIONS
 
 
 IDENTIFICATION_STATUS_LABELS = {
@@ -33,6 +33,12 @@ SEVERITY_LABELS = {
 
 def _format_identification_status(status: str) -> str:
     return IDENTIFICATION_STATUS_LABELS.get(status or "", status or "Не указан")
+
+
+def _format_ts(ts_value) -> str:
+    if ts_value in {None, ""}:
+        return "—"
+    return datetime.fromtimestamp(float(ts_value)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def render_event_journal(
@@ -79,6 +85,7 @@ def render_event_journal(
                 "Зона": incident.get("zone_name") or "не задана",
                 "Серьезность": SEVERITY_LABELS.get(incident.get("severity"), incident.get("severity") or "—"),
                 "Статус": INCIDENT_STATUS_OPTIONS.get(incident.get("status"), incident.get("status") or "—"),
+                "Назначено": incident.get("assigned_to") or "—",
                 "Контекст": _format_identification_status(incident.get("identification_status") or "unlinked"),
                 "Уверенность": round(incident.get("confidence") or 0.0, 3),
                 "Комментарий": incident.get("operator_comment") or "",
@@ -143,28 +150,59 @@ def render_event_journal(
             st.write(f"Зона: `{selected_incident.get('zone_name') or 'не задана'}`")
             st.write(f"Серьезность: `{SEVERITY_LABELS.get(selected_incident.get('severity'), selected_incident.get('severity') or '—')}`")
             st.write(f"Статус: `{INCIDENT_STATUS_OPTIONS.get(selected_incident.get('status'), selected_incident.get('status') or '—')}`")
+            st.write(f"Assigned to: `{selected_incident.get('assigned_to') or '—'}`")
             st.write(f"Контекст: `{_format_identification_status(selected_incident.get('identification_status') or 'unlinked')}`")
             st.write(f"Confidence: `{round(selected_incident.get('confidence') or 0.0, 3)}`")
             st.write(f"Event ID: `{selected_incident.get('event_id') or '—'}`")
+            st.write(f"Started at: `{_format_ts(selected_incident.get('started_at'))}`")
+            st.write(f"Acknowledged at: `{_format_ts(selected_incident.get('acknowledged_at'))}`")
+            st.write(f"Resolved at: `{_format_ts(selected_incident.get('resolved_at'))}`")
+            st.write(f"Resolution code: `{INCIDENT_RESOLUTION_OPTIONS.get(selected_incident.get('resolution_code'), selected_incident.get('resolution_code') or '—')}`")
+            if selected_incident.get("resolution_notes"):
+                st.caption(f"Resolution notes: {selected_incident['resolution_notes']}")
             st.caption(selected_incident.get("operator_comment") or "Комментарий оператора отсутствует.")
 
         with st.container(border=True):
             st.markdown("**Операторская обработка**")
-            status = st.selectbox(
-                "Статус инцидента",
-                options=list(INCIDENT_STATUS_OPTIONS.keys()),
-                index=list(INCIDENT_STATUS_OPTIONS.keys()).index(selected_incident.get("status", "new"))
-                if selected_incident.get("status", "new") in INCIDENT_STATUS_OPTIONS
-                else 0,
-                format_func=lambda key: INCIDENT_STATUS_OPTIONS[key],
-                key=f"incident_status_{selected_id}",
-            )
-            operator_comment = st.text_area(
-                "Комментарий оператора",
-                value=selected_incident.get("operator_comment") or "",
-                key=f"incident_comment_{selected_id}",
-                placeholder="Например: подтверждено по регламенту охраны, направлен запрос на проверку или признано ложным срабатыванием.",
-            )
+            wf_col1, wf_col2 = st.columns(2)
+            with wf_col1:
+                status = st.selectbox(
+                    "Статус инцидента",
+                    options=list(INCIDENT_STATUS_OPTIONS.keys()),
+                    index=list(INCIDENT_STATUS_OPTIONS.keys()).index(selected_incident.get("status", "new"))
+                    if selected_incident.get("status", "new") in INCIDENT_STATUS_OPTIONS
+                    else 0,
+                    format_func=lambda key: INCIDENT_STATUS_OPTIONS[key],
+                    key=f"incident_status_{selected_id}",
+                )
+                assigned_to = st.text_input(
+                    "Ответственный",
+                    value=selected_incident.get("assigned_to") or "",
+                    key=f"incident_assigned_to_{selected_id}",
+                    placeholder="Например: смена А / Иван Петров",
+                )
+                resolution_code = st.selectbox(
+                    "Код закрытия",
+                    options=list(INCIDENT_RESOLUTION_OPTIONS.keys()),
+                    index=list(INCIDENT_RESOLUTION_OPTIONS.keys()).index(selected_incident.get("resolution_code") or "")
+                    if (selected_incident.get("resolution_code") or "") in INCIDENT_RESOLUTION_OPTIONS
+                    else 0,
+                    format_func=lambda key: INCIDENT_RESOLUTION_OPTIONS[key],
+                    key=f"incident_resolution_code_{selected_id}",
+                )
+            with wf_col2:
+                operator_comment = st.text_area(
+                    "Комментарий оператора",
+                    value=selected_incident.get("operator_comment") or "",
+                    key=f"incident_comment_{selected_id}",
+                    placeholder="Например: подтверждено по регламенту охраны, направлен запрос на проверку или признано ложным срабатыванием.",
+                )
+                resolution_notes = st.text_area(
+                    "Resolution notes",
+                    value=selected_incident.get("resolution_notes") or "",
+                    key=f"incident_resolution_notes_{selected_id}",
+                    placeholder="Кратко зафиксируй итог обработки, внешний номер обращения или корректирующее действие.",
+                )
             if st.button("Сохранить статус инцидента", key=f"incident_status_submit_{selected_id}", width="stretch"):
                 if not can_update:
                     st.error("Недостаточно прав для изменения статуса инцидента.")
@@ -173,6 +211,9 @@ def render_event_journal(
                         incident_id=selected_id,
                         status=status,
                         operator_comment=operator_comment,
+                        assigned_to=assigned_to,
+                        resolution_code=resolution_code,
+                        resolution_notes=resolution_notes,
                     )
                     st.success("Статус инцидента обновлен.")
                 st.rerun()
@@ -226,7 +267,24 @@ def render_event_journal(
         with st.container(border=True):
             st.markdown("**Snapshot / evidence**")
             snapshot_path = selected_incident.get("snapshot_path")
+            evidence_clip_path = selected_incident.get("evidence_clip_path")
+            evidence_retention_until = selected_incident.get("evidence_retention_until")
             if snapshot_path and Path(snapshot_path).exists():
-                st.image(snapshot_path, width="stretch", caption="Последний доступный кадр выбранного источника")
+                st.image(snapshot_path, width="stretch", caption="Incident snapshot")
             else:
                 st.info("Для выбранного инцидента отдельный snapshot пока не сохранен.")
+            if evidence_clip_path and Path(evidence_clip_path).exists():
+                st.video(evidence_clip_path)
+                with open(evidence_clip_path, "rb") as evidence_file:
+                    st.download_button(
+                        "Скачать evidence clip",
+                        data=evidence_file.read(),
+                        file_name=Path(evidence_clip_path).name,
+                        mime="video/mp4",
+                    )
+            else:
+                st.caption("Evidence clip пока не сформирован или уже удален по retention.")
+            if evidence_retention_until:
+                st.caption(
+                    f"Retention до: {datetime.fromtimestamp(float(evidence_retention_until)).strftime('%Y-%m-%d %H:%M:%S')}"
+                )

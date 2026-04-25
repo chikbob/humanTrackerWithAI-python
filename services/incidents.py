@@ -18,9 +18,22 @@ INCIDENT_SEVERITY_BY_EVENT = {
 INCIDENT_STATUS_OPTIONS = {
     "new": "Новый",
     "acknowledged": "Подтвержден оператором",
+    "in_progress": "В работе",
+    "on_hold": "Ожидание внешней проверки",
     "false_positive": "Ложное срабатывание",
     "resolved": "Обработан",
     "escalated": "Эскалирован",
+    "rejected": "Отклонен",
+}
+
+INCIDENT_RESOLUTION_OPTIONS = {
+    "": "Не указан",
+    "confirmed_security_event": "Подтвержденный инцидент безопасности",
+    "operator_training": "Требуется обучение оператора",
+    "camera_reposition_required": "Требуется корректировка камеры/зоны",
+    "model_threshold_tuning": "Нужна перенастройка AI profile/thresholds",
+    "false_detection": "Ложная детекция модели",
+    "external_follow_up": "Передано во внешний контур",
 }
 
 
@@ -37,6 +50,8 @@ def sync_incidents_from_events(events: list[dict], *, upsert_incident_fn):
             status="new",
             confidence=float(event.get("confidence") or 0.0),
             snapshot_path=event.get("snapshot_path") or "",
+            evidence_clip_path=event.get("evidence_clip_path") or "",
+            evidence_retention_until=event.get("evidence_retention_until"),
             operator_comment="",
             employee_id=event.get("employee_id") or event.get("identified_employee_id"),
             identification_status=event.get("identification_status") or "unlinked",

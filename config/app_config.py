@@ -18,6 +18,10 @@ DEFAULT_UI_ACTOR = "Главный оператор"
 DEFAULT_AI_PROFILE = "balanced"
 DEFAULT_INCIDENT_SCORE_THRESHOLD = 0.55
 DEFAULT_TRACK_IOU_THRESHOLD = 0.5
+DEFAULT_INCIDENT_EVIDENCE_PRE_SECONDS = 4
+DEFAULT_INCIDENT_EVIDENCE_POST_SECONDS = 4
+DEFAULT_INCIDENT_EVIDENCE_FPS = 8
+DEFAULT_INCIDENT_EVIDENCE_RETENTION_DAYS = 14
 
 SOURCE_PROCESSING_DEFAULTS = {
     "enable_roi": True,
@@ -48,6 +52,10 @@ SYSTEM_SETTING_DEFAULTS = {
     "ai_quality_profile": DEFAULT_AI_PROFILE,
     "incident_score_threshold": str(DEFAULT_INCIDENT_SCORE_THRESHOLD),
     "tracking_iou_threshold": str(DEFAULT_TRACK_IOU_THRESHOLD),
+    "incident_evidence_pre_seconds": str(DEFAULT_INCIDENT_EVIDENCE_PRE_SECONDS),
+    "incident_evidence_post_seconds": str(DEFAULT_INCIDENT_EVIDENCE_POST_SECONDS),
+    "incident_evidence_fps": str(DEFAULT_INCIDENT_EVIDENCE_FPS),
+    "incident_evidence_retention_days": str(DEFAULT_INCIDENT_EVIDENCE_RETENTION_DAYS),
     "active_access_point_id": "",
     "notifications_enabled": "0",
     "incident_notify_min_severity": DEFAULT_NOTIFY_MIN_SEVERITY,

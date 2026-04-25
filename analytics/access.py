@@ -52,7 +52,9 @@ def enrich_event_rows(events: list[dict], sources: list[dict], statuses: list[di
                 "source_id": source_id,
                 "source_name": source_name,
                 "source_location": source_location,
-                "snapshot_path": source_status.get("last_snapshot_path"),
+                "snapshot_path": event.get("snapshot_path") or source_status.get("last_snapshot_path"),
+                "evidence_clip_path": event.get("evidence_clip_path") or "",
+                "evidence_retention_until": event.get("evidence_retention_until"),
                 "is_suspicious": event.get("event_type") in SUSPICIOUS_EVENT_TYPES,
             }
         )

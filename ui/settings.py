@@ -92,6 +92,13 @@ def render_system_settings(
                     step=0.05,
                     help="Минимальный aggregated score для регистрации инцидентного события в production pipeline.",
                 )
+                incident_evidence_pre_seconds = st.slider(
+                    "Evidence pre-roll, сек",
+                    min_value=1,
+                    max_value=15,
+                    value=int(settings.get("incident_evidence_pre_seconds", 4)),
+                    step=1,
+                )
             with col3:
                 model_name = st.selectbox(
                     "Активная модель",
@@ -132,6 +139,27 @@ def render_system_settings(
                     value=float(settings.get("tracking_iou_threshold", 0.5)),
                     step=0.05,
                 )
+                incident_evidence_post_seconds = st.slider(
+                    "Evidence post-roll, сек",
+                    min_value=0,
+                    max_value=15,
+                    value=int(settings.get("incident_evidence_post_seconds", 4)),
+                    step=1,
+                )
+                incident_evidence_fps = st.slider(
+                    "Evidence clip FPS",
+                    min_value=1,
+                    max_value=15,
+                    value=int(settings.get("incident_evidence_fps", 8)),
+                    step=1,
+                )
+                incident_evidence_retention_days = st.slider(
+                    "Retention evidence, дней",
+                    min_value=1,
+                    max_value=90,
+                    value=int(settings.get("incident_evidence_retention_days", 14)),
+                    step=1,
+                )
                 active_access_point = st.selectbox(
                     "Приоритетная зона контроля",
                     options=list(point_options.keys()) if point_options else ["не задана"],
@@ -150,11 +178,15 @@ def render_system_settings(
                 set_system_setting_fn(key="source_timeout", value=str(source_timeout))
                 set_system_setting_fn(key="employee_sync_interval", value=str(employee_sync_interval))
                 set_system_setting_fn(key="incident_score_threshold", value=str(incident_score_threshold))
+                set_system_setting_fn(key="incident_evidence_pre_seconds", value=str(incident_evidence_pre_seconds))
                 set_system_setting_fn(key="model_name", value=model_name)
                 set_system_setting_fn(key="tracker_type", value=tracker_type)
                 set_system_setting_fn(key="identity_backend", value=identity_backend)
                 set_system_setting_fn(key="ai_quality_profile", value=ai_quality_profile)
                 set_system_setting_fn(key="tracking_iou_threshold", value=str(tracking_iou_threshold))
+                set_system_setting_fn(key="incident_evidence_post_seconds", value=str(incident_evidence_post_seconds))
+                set_system_setting_fn(key="incident_evidence_fps", value=str(incident_evidence_fps))
+                set_system_setting_fn(key="incident_evidence_retention_days", value=str(incident_evidence_retention_days))
                 set_system_setting_fn(key="debug_mode", value="1" if debug_mode else "0")
                 if point_options:
                     set_system_setting_fn(key="active_access_point_id", value=str(point_options[active_access_point]))
@@ -178,6 +210,17 @@ def render_system_settings(
         profile_cols[2].metric("Inference", profile_meta["inference_size"])
         profile_cols[3].metric("Tracker", profile_meta["tracker_type"])
         profile_cols[4].metric("Incident score", profile_meta["incident_score_threshold"])
+    with st.container(border=True):
+        st.subheader("Incident evidence")
+        st.caption(
+            "Worker сохраняет стабильный incident snapshot и доказательный клип вокруг события. "
+            "Retention очищает старые evidence-файлы автоматически без остановки сервиса."
+        )
+        evidence_cols = st.columns(4)
+        evidence_cols[0].metric("Pre-roll", f"{int(settings.get('incident_evidence_pre_seconds', 4))} сек")
+        evidence_cols[1].metric("Post-roll", f"{int(settings.get('incident_evidence_post_seconds', 4))} сек")
+        evidence_cols[2].metric("Clip FPS", int(settings.get("incident_evidence_fps", 8)))
+        evidence_cols[3].metric("Retention", f"{int(settings.get('incident_evidence_retention_days', 14))} дн")
     with st.container(border=True):
         st.subheader("Уведомления и интеграции")
         st.caption(

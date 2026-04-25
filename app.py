@@ -194,10 +194,36 @@ def main():
         set_system_setting(key=key, value=value)
         audit("system_setting.updated", "system_setting", key, {"value": value})
 
-    def guarded_update_incident_status(*, incident_id: int, status: str, operator_comment: str | None = None):
+    def guarded_update_incident_status(
+        *,
+        incident_id: int,
+        status: str,
+        operator_comment: str | None = None,
+        assigned_to: str | None = None,
+        resolution_code: str | None = None,
+        resolution_notes: str | None = None,
+    ):
         assert_permission(access_context, "update_incidents")
-        update_incident_status(incident_id=incident_id, status=status, operator_comment=operator_comment)
-        audit("incident.status_updated", "incident", str(incident_id), {"status": status, "operator_comment": operator_comment or ""})
+        update_incident_status(
+            incident_id=incident_id,
+            status=status,
+            operator_comment=operator_comment,
+            assigned_to=assigned_to,
+            resolution_code=resolution_code,
+            resolution_notes=resolution_notes,
+        )
+        audit(
+            "incident.status_updated",
+            "incident",
+            str(incident_id),
+            {
+                "status": status,
+                "operator_comment": operator_comment or "",
+                "assigned_to": assigned_to or "",
+                "resolution_code": resolution_code or "",
+                "resolution_notes": resolution_notes or "",
+            },
+        )
 
     def guarded_link_event_to_employee(*, event_id: str, employee_id: int, identification_status: str, note: str = ""):
         assert_permission(access_context, "link_incidents")

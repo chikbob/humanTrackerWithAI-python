@@ -39,6 +39,10 @@ def create_persisted_event(
     identified_employee_id: Optional[int] = None,
     identification_confidence: Optional[float] = None,
     identification_status: Optional[str] = None,
+    snapshot_path: str = "",
+    evidence_clip_path: str = "",
+    evidence_retention_until: Optional[float] = None,
+    incident_score: Optional[float] = None,
 ):
     """Persist either a raw CV event or a domain event into the unified event journal."""
     identity_state = getattr(session_state, "identity_gallery_state", None)
@@ -62,6 +66,10 @@ def create_persisted_event(
         "frame_width": frame_width,
         "frame_height": frame_height,
         "message": message,
+        "snapshot_path": snapshot_path,
+        "evidence_clip_path": evidence_clip_path,
+        "evidence_retention_until": evidence_retention_until,
+        "incident_score": incident_score,
         "employee_id": employee_id,
         "access_point_id": access_point_id,
         "access_log_id": access_log_id,
@@ -322,6 +330,7 @@ def register_entry_zone_domain_events(
             frame_height=detection.get("frame_height"),
             message="Человек обнаружен рядом со входной зоной",
             access_point_id=settings.get("default_access_point_id"),
+            incident_score=detection.get("incident_score"),
         )
     if _notify_once_for_track(session, track_key, "unknown_person_detected"):
         create_domain_entry_event(
@@ -342,6 +351,7 @@ def register_entry_zone_domain_events(
             message="Личность человека не установлена; требуется последующее сопоставление с сотрудником",
             access_point_id=settings.get("default_access_point_id"),
             identification_status="unknown",
+            incident_score=detection.get("incident_score"),
         )
 
     # Transition into the entry zone.
@@ -364,6 +374,7 @@ def register_entry_zone_domain_events(
             frame_height=detection.get("frame_height"),
             message="Человек вошел во входную зону предприятия",
             access_point_id=settings.get("default_access_point_id"),
+            incident_score=detection.get("incident_score"),
         )
         if settings["enable_notifications"]:
             notify_callback("Событие проходной: человек вошел во входную зону")
@@ -387,6 +398,7 @@ def register_entry_zone_domain_events(
                     frame_height=detection.get("frame_height"),
                     message="Зафиксирована повторная попытка входа в контролируемую зону за короткий интервал",
                     access_point_id=settings.get("default_access_point_id"),
+                    incident_score=detection.get("incident_score"),
                 )
 
     # Explicit exit from the entry zone while the track is still visible.
@@ -408,6 +420,7 @@ def register_entry_zone_domain_events(
             frame_height=detection.get("frame_height"),
             message="Человек покинул входную зону предприятия",
             access_point_id=settings.get("default_access_point_id"),
+            incident_score=detection.get("incident_score"),
         )
 
     # Long presence near the entrance is kept separate from access entry/exit.
@@ -433,6 +446,7 @@ def register_entry_zone_domain_events(
                 frame_height=detection.get("frame_height"),
                 message=f"Человек находится рядом со входной зоной более {int(prolonged_seconds)} сек",
                 access_point_id=settings.get("default_access_point_id"),
+                incident_score=detection.get("incident_score"),
             )
             if settings["enable_notifications"]:
                 notify_callback("Событие проходной: зафиксировано длительное присутствие у входа")

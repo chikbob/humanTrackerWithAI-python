@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from analytics.access import build_kpi_summary, enrich_event_rows
 from db.repository import (
     load_access_points,
@@ -17,7 +19,21 @@ from services.telemetry import build_worker_runtime_metrics
 
 
 def build_incident_summary(incidents: list[dict]) -> dict:
-    active_statuses = {"new", "acknowledged", "escalated"}
+    active_statuses = {"new", "acknowledged", "in_progress", "on_hold", "escalated"}
+    ack_durations = []
+    resolution_durations = []
+    overdue_active = 0
+    now_ts = time.time()
+    for incident in incidents:
+        started_at = float(incident.get("started_at") or 0.0)
+        acknowledged_at = incident.get("acknowledged_at")
+        resolved_at = incident.get("resolved_at")
+        if started_at and acknowledged_at:
+            ack_durations.append(max(0.0, float(acknowledged_at) - started_at) / 60.0)
+        if started_at and resolved_at:
+            resolution_durations.append(max(0.0, float(resolved_at) - started_at) / 60.0)
+        if incident.get("status") in active_statuses and started_at and (now_ts - started_at) > 15 * 60:
+            overdue_active += 1
     return {
         "total": len(incidents),
         "active": sum(1 for incident in incidents if incident.get("status") in active_statuses),
@@ -25,6 +41,10 @@ def build_incident_summary(incidents: list[dict]) -> dict:
         "high": sum(1 for incident in incidents if incident.get("severity") == "high"),
         "false_positive": sum(1 for incident in incidents if incident.get("status") == "false_positive"),
         "resolved": sum(1 for incident in incidents if incident.get("status") == "resolved"),
+        "assigned": sum(1 for incident in incidents if (incident.get("assigned_to") or "").strip()),
+        "mean_ack_minutes": round(sum(ack_durations) / len(ack_durations), 2) if ack_durations else 0.0,
+        "mean_resolution_minutes": round(sum(resolution_durations) / len(resolution_durations), 2) if resolution_durations else 0.0,
+        "overdue_active": overdue_active,
     }
 
 

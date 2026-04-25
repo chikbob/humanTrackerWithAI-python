@@ -15,6 +15,8 @@ class IncidentsServiceTests(unittest.TestCase):
                 "access_point_name": "Restricted area",
                 "confidence": 0.84,
                 "snapshot_path": "/tmp/frame.jpg",
+                "evidence_clip_path": "/tmp/evidence.mp4",
+                "evidence_retention_until": 456.0,
                 "timestamp": 123.0,
                 "identification_status": "unlinked",
             },
@@ -30,6 +32,8 @@ class IncidentsServiceTests(unittest.TestCase):
         self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0]["event_id"], "evt-1")
         self.assertEqual(captured[0]["severity"], "high")
+        self.assertEqual(captured[0]["evidence_clip_path"], "/tmp/evidence.mp4")
+        self.assertEqual(captured[0]["evidence_retention_until"], 456.0)
 
     def test_severity_mapping(self):
         self.assertEqual(infer_incident_severity({"event_type": "stream_offline"}), "critical")

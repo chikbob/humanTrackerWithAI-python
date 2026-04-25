@@ -121,12 +121,22 @@ class ApiAppTests(unittest.TestCase):
 
         update_response = self.client.put(
             f"/api/v1/incidents/{incident_id}/status",
-            params={"status": "acknowledged", "operator_comment": "Checked by operator"},
+            params={
+                "status": "in_progress",
+                "operator_comment": "Checked by operator",
+                "assigned_to": "Shift lead",
+                "resolution_code": "external_follow_up",
+                "resolution_notes": "Escalated to security desk",
+            },
         )
         self.assertEqual(update_response.status_code, 200)
         updated = repository.load_incidents()[0]
-        self.assertEqual(updated["status"], "acknowledged")
+        self.assertEqual(updated["status"], "in_progress")
         self.assertEqual(updated["operator_comment"], "Checked by operator")
+        self.assertEqual(updated["assigned_to"], "Shift lead")
+        self.assertEqual(updated["resolution_code"], "external_follow_up")
+        self.assertEqual(updated["resolution_notes"], "Escalated to security desk")
+        self.assertIsNotNone(updated["acknowledged_at"])
 
     def test_metrics_endpoint_returns_prometheus_payload(self):
         response = self.client.get("/metrics")

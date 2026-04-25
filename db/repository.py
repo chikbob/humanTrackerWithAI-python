@@ -140,7 +140,9 @@ def _zone_rule_select_columns() -> str:
 def _incident_select_columns() -> str:
     return """
         id, event_id, source_id, zone_name, incident_type, severity, status, confidence,
-        snapshot_path, operator_comment, employee_id, identification_status, started_at, updated_at,
+        snapshot_path, evidence_clip_path, evidence_retention_until, operator_comment,
+        assigned_to, acknowledged_at, resolved_at, resolution_code, resolution_notes,
+        employee_id, identification_status, started_at, updated_at,
         source_name
     """
 
@@ -203,7 +205,16 @@ def normalize_incident_config(incident: dict | None = None) -> dict:
         "status": (incident.get("status") or "new").strip() or "new",
         "confidence": float(incident.get("confidence") or 0.0),
         "snapshot_path": (incident.get("snapshot_path") or "").strip(),
+        "evidence_clip_path": (incident.get("evidence_clip_path") or "").strip(),
+        "evidence_retention_until": float(incident.get("evidence_retention_until"))
+        if incident.get("evidence_retention_until") not in {None, ""}
+        else None,
         "operator_comment": (incident.get("operator_comment") or "").strip(),
+        "assigned_to": (incident.get("assigned_to") or "").strip(),
+        "acknowledged_at": float(incident.get("acknowledged_at")) if incident.get("acknowledged_at") not in {None, ""} else None,
+        "resolved_at": float(incident.get("resolved_at")) if incident.get("resolved_at") not in {None, ""} else None,
+        "resolution_code": (incident.get("resolution_code") or "").strip(),
+        "resolution_notes": (incident.get("resolution_notes") or "").strip(),
         "zone_name": (incident.get("zone_name") or "не задана").strip() or "не задана",
         "incident_type": (incident.get("incident_type") or "unknown").strip() or "unknown",
         "identification_status": normalize_identification_status(incident.get("identification_status")),
@@ -300,6 +311,10 @@ def init_db():
             frame_height INTEGER,
             message TEXT,
             event_scope TEXT DEFAULT 'raw',
+            snapshot_path TEXT,
+            evidence_clip_path TEXT,
+            evidence_retention_until REAL,
+            incident_score REAL,
             access_log_id INTEGER NULL,
             employee_id INTEGER NULL,
             access_point_id INTEGER NULL,
@@ -513,7 +528,14 @@ def init_db():
             status TEXT DEFAULT 'new',
             confidence REAL DEFAULT 0.0,
             snapshot_path TEXT,
+            evidence_clip_path TEXT,
+            evidence_retention_until REAL,
             operator_comment TEXT,
+            assigned_to TEXT,
+            acknowledged_at REAL,
+            resolved_at REAL,
+            resolution_code TEXT,
+            resolution_notes TEXT,
             employee_id INTEGER NULL,
             identification_status TEXT DEFAULT 'unlinked',
             started_at REAL,
@@ -670,7 +692,14 @@ def init_db():
             ("status", "status TEXT DEFAULT 'new'"),
             ("confidence", "confidence REAL DEFAULT 0.0"),
             ("snapshot_path", "snapshot_path TEXT"),
+            ("evidence_clip_path", "evidence_clip_path TEXT"),
+            ("evidence_retention_until", "evidence_retention_until REAL"),
             ("operator_comment", "operator_comment TEXT"),
+            ("assigned_to", "assigned_to TEXT"),
+            ("acknowledged_at", "acknowledged_at REAL"),
+            ("resolved_at", "resolved_at REAL"),
+            ("resolution_code", "resolution_code TEXT"),
+            ("resolution_notes", "resolution_notes TEXT"),
             ("employee_id", "employee_id INTEGER"),
             ("identification_status", "identification_status TEXT DEFAULT 'unlinked'"),
             ("started_at", "started_at REAL"),
@@ -729,6 +758,10 @@ def init_db():
         "events",
         [
             ("event_scope", "event_scope TEXT DEFAULT 'raw'"),
+            ("snapshot_path", "snapshot_path TEXT"),
+            ("evidence_clip_path", "evidence_clip_path TEXT"),
+            ("evidence_retention_until", "evidence_retention_until REAL"),
+            ("incident_score", "incident_score REAL"),
             ("access_log_id", "access_log_id INTEGER NULL"),
             ("employee_id", "employee_id INTEGER NULL"),
             ("access_point_id", "access_point_id INTEGER NULL"),
@@ -942,9 +975,10 @@ def db_insert_event(event: dict):
             event_id, session_id, event_type, source_type, frame_index, timestamp,
             class_name, confidence, track_id, animal_group, is_animal, roi_inside,
             center_x, center_y, frame_width, frame_height, message, event_scope,
+            snapshot_path, evidence_clip_path, evidence_retention_until, incident_score,
             access_log_id, employee_id, access_point_id, identified_employee_id,
             identification_confidence, identification_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event["event_id"],
@@ -965,6 +999,10 @@ def db_insert_event(event: dict):
             event.get("frame_height"),
             event.get("message"),
             event_scope,
+            (event.get("snapshot_path") or "").strip(),
+            (event.get("evidence_clip_path") or "").strip(),
+            float(event["evidence_retention_until"]) if event.get("evidence_retention_until") not in {None, ""} else None,
+            float(event["incident_score"]) if event.get("incident_score") not in {None, ""} else None,
             access_log_id,
             event.get("employee_id"),
             event.get("access_point_id"),
@@ -1094,6 +1132,10 @@ def load_history_from_db():
                 "frame_height": row["frame_height"],
                 "message": row["message"] or "",
                 "event_scope": row["event_scope"] if "event_scope" in row.keys() else "raw",
+                "snapshot_path": row["snapshot_path"] if "snapshot_path" in row.keys() else "",
+                "evidence_clip_path": row["evidence_clip_path"] if "evidence_clip_path" in row.keys() else "",
+                "evidence_retention_until": row["evidence_retention_until"] if "evidence_retention_until" in row.keys() else None,
+                "incident_score": row["incident_score"] if "incident_score" in row.keys() else None,
                 "access_log_id": row["access_log_id"] if "access_log_id" in row.keys() else None,
                 "employee_id": row["employee_id"] if "employee_id" in row.keys() else None,
                 "access_point_id": row["access_point_id"] if "access_point_id" in row.keys() else None,
@@ -1384,6 +1426,10 @@ def load_events(limit=None):
             events.frame_height,
             events.message,
             events.event_scope,
+            events.snapshot_path,
+            events.evidence_clip_path,
+            events.evidence_retention_until,
+            events.incident_score,
             events.access_log_id,
             events.employee_id,
             events.access_point_id,
@@ -1560,7 +1606,14 @@ def load_incidents(*, limit: int | None = None):
             incidents.status,
             incidents.confidence,
             incidents.snapshot_path,
+            incidents.evidence_clip_path,
+            incidents.evidence_retention_until,
             incidents.operator_comment,
+            incidents.assigned_to,
+            incidents.acknowledged_at,
+            incidents.resolved_at,
+            incidents.resolution_code,
+            incidents.resolution_notes,
             incidents.employee_id,
             incidents.identification_status,
             incidents.started_at,
@@ -1948,7 +2001,14 @@ def upsert_incident(
     status: str = "new",
     confidence: float = 0.0,
     snapshot_path: str = "",
+    evidence_clip_path: str = "",
+    evidence_retention_until: float | None = None,
     operator_comment: str = "",
+    assigned_to: str = "",
+    acknowledged_at: float | None = None,
+    resolved_at: float | None = None,
+    resolution_code: str = "",
+    resolution_notes: str = "",
     employee_id: int | None = None,
     identification_status: str = "unlinked",
     started_at: float | None = None,
@@ -1961,7 +2021,14 @@ def upsert_incident(
             "status": status,
             "confidence": confidence,
             "snapshot_path": snapshot_path,
+            "evidence_clip_path": evidence_clip_path,
+            "evidence_retention_until": evidence_retention_until,
             "operator_comment": operator_comment,
+            "assigned_to": assigned_to,
+            "acknowledged_at": acknowledged_at,
+            "resolved_at": resolved_at,
+            "resolution_code": resolution_code,
+            "resolution_notes": resolution_notes,
             "identification_status": identification_status,
         }
     )
@@ -1969,7 +2036,11 @@ def upsert_incident(
     started_at = float(started_at if started_at is not None else now_ts)
     conn = get_db_conn()
     existing = conn.execute(
-        "SELECT id, status, operator_comment FROM incidents WHERE event_id = ?",
+        """
+        SELECT id, status, operator_comment, assigned_to, acknowledged_at, resolved_at, resolution_code, resolution_notes
+        FROM incidents
+        WHERE event_id = ?
+        """,
         (event_id,),
     ).fetchone()
     if existing is None:
@@ -1977,8 +2048,10 @@ def upsert_incident(
             """
             INSERT INTO incidents (
                 event_id, source_id, zone_name, incident_type, severity, status, confidence,
-                snapshot_path, operator_comment, employee_id, identification_status, started_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                snapshot_path, evidence_clip_path, evidence_retention_until, operator_comment,
+                assigned_to, acknowledged_at, resolved_at, resolution_code, resolution_notes,
+                employee_id, identification_status, started_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event_id,
@@ -1989,7 +2062,14 @@ def upsert_incident(
                 config["status"],
                 config["confidence"],
                 config["snapshot_path"],
+                config["evidence_clip_path"],
+                config["evidence_retention_until"],
                 config["operator_comment"],
+                config["assigned_to"],
+                config["acknowledged_at"],
+                config["resolved_at"],
+                config["resolution_code"],
+                config["resolution_notes"],
                 employee_id,
                 config["identification_status"],
                 started_at,
@@ -1999,11 +2079,18 @@ def upsert_incident(
     else:
         preserved_status = existing["status"] or config["status"]
         preserved_comment = existing["operator_comment"] or config["operator_comment"]
+        preserved_assigned_to = existing["assigned_to"] or config["assigned_to"]
+        preserved_acknowledged_at = existing["acknowledged_at"] if existing["acknowledged_at"] is not None else config["acknowledged_at"]
+        preserved_resolved_at = existing["resolved_at"] if existing["resolved_at"] is not None else config["resolved_at"]
+        preserved_resolution_code = existing["resolution_code"] or config["resolution_code"]
+        preserved_resolution_notes = existing["resolution_notes"] or config["resolution_notes"]
         conn.execute(
             """
             UPDATE incidents
             SET source_id = ?, zone_name = ?, incident_type = ?, severity = ?, status = ?, confidence = ?,
-                snapshot_path = ?, operator_comment = ?, employee_id = ?, identification_status = ?, updated_at = ?
+                snapshot_path = ?, evidence_clip_path = ?, evidence_retention_until = ?, operator_comment = ?,
+                assigned_to = ?, acknowledged_at = ?, resolved_at = ?, resolution_code = ?, resolution_notes = ?,
+                employee_id = ?, identification_status = ?, updated_at = ?
             WHERE event_id = ?
             """,
             (
@@ -2014,13 +2101,63 @@ def upsert_incident(
                 preserved_status,
                 config["confidence"],
                 config["snapshot_path"],
+                config["evidence_clip_path"],
+                config["evidence_retention_until"],
                 preserved_comment,
+                preserved_assigned_to,
+                preserved_acknowledged_at,
+                preserved_resolved_at,
+                preserved_resolution_code,
+                preserved_resolution_notes,
                 employee_id,
                 config["identification_status"],
                 now_ts,
                 event_id,
             ),
         )
+    conn.commit()
+    conn.close()
+
+
+def attach_event_evidence(
+    *,
+    event_id: str,
+    snapshot_path: str = "",
+    evidence_clip_path: str = "",
+    evidence_retention_until: float | None = None,
+):
+    conn = get_db_conn()
+    now_ts = time.time()
+    snapshot_path = snapshot_path.strip()
+    evidence_clip_path = evidence_clip_path.strip()
+    retention_value = float(evidence_retention_until) if evidence_retention_until is not None else None
+    conn.execute(
+        """
+        UPDATE events
+        SET snapshot_path = ?, evidence_clip_path = ?, evidence_retention_until = ?
+        WHERE event_id = ?
+        """,
+        (snapshot_path, evidence_clip_path, retention_value, event_id),
+    )
+    conn.execute(
+        """
+        UPDATE incidents
+        SET snapshot_path = CASE WHEN ? <> '' THEN ? ELSE snapshot_path END,
+            evidence_clip_path = CASE WHEN ? <> '' THEN ? ELSE evidence_clip_path END,
+            evidence_retention_until = COALESCE(?, evidence_retention_until),
+            updated_at = ?
+        WHERE event_id = ?
+        """,
+        (
+            snapshot_path,
+            snapshot_path,
+            evidence_clip_path,
+            evidence_clip_path,
+            retention_value,
+            now_ts,
+            event_id,
+        ),
+    )
     conn.commit()
     conn.close()
 
@@ -2206,20 +2343,53 @@ def update_incident_status(
     incident_id: int,
     status: str,
     operator_comment: str | None = None,
+    assigned_to: str | None = None,
+    resolution_code: str | None = None,
+    resolution_notes: str | None = None,
 ):
     normalized_status = (status or "new").strip() or "new"
     now_ts = time.time()
     conn = get_db_conn()
-    if operator_comment is None:
-        conn.execute(
-            "UPDATE incidents SET status = ?, updated_at = ? WHERE id = ?",
-            (normalized_status, now_ts, int(incident_id)),
-        )
-    else:
-        conn.execute(
-            "UPDATE incidents SET status = ?, operator_comment = ?, updated_at = ? WHERE id = ?",
-            (normalized_status, operator_comment.strip(), now_ts, int(incident_id)),
-        )
+    existing = conn.execute(
+        """
+        SELECT acknowledged_at, resolved_at, assigned_to, operator_comment, resolution_code, resolution_notes
+        FROM incidents
+        WHERE id = ?
+        """,
+        (int(incident_id),),
+    ).fetchone()
+    if existing is None:
+        conn.close()
+        return
+    resolved_statuses = {"resolved", "false_positive", "rejected"}
+    acknowledged_statuses = {"acknowledged", "in_progress", "on_hold", "escalated"} | resolved_statuses
+    acknowledged_at = existing["acknowledged_at"]
+    if normalized_status in acknowledged_statuses and acknowledged_at is None:
+        acknowledged_at = now_ts
+    resolved_at = existing["resolved_at"]
+    if normalized_status in resolved_statuses:
+        resolved_at = now_ts
+    elif normalized_status not in resolved_statuses:
+        resolved_at = None
+    conn.execute(
+        """
+        UPDATE incidents
+        SET status = ?, operator_comment = ?, assigned_to = ?, acknowledged_at = ?, resolved_at = ?,
+            resolution_code = ?, resolution_notes = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            normalized_status,
+            existing["operator_comment"] if operator_comment is None else operator_comment.strip(),
+            existing["assigned_to"] if assigned_to is None else assigned_to.strip(),
+            acknowledged_at,
+            resolved_at,
+            existing["resolution_code"] if resolution_code is None else resolution_code.strip(),
+            existing["resolution_notes"] if resolution_notes is None else resolution_notes.strip(),
+            now_ts,
+            int(incident_id),
+        ),
+    )
     conn.commit()
     conn.close()
 
