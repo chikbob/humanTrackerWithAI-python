@@ -27,6 +27,10 @@ def render_system_settings(
         st.info("Настройки системы доступны только администратору. Экран открыт в режиме просмотра.")
     st.subheader("Настройки системы")
     point_options = {point["name"]: point["id"] for point in access_points}
+    if not access_points:
+        st.warning(
+            "Точка контроля ещё не настроена. Система продолжит работать, но события будут без приоритетной зоны до появления access point."
+        )
     default_point_name = next(
         (point["name"] for point in access_points if str(point["id"]) == str(settings.get("active_access_point_id", ""))),
         access_points[0]["name"] if access_points else None,
@@ -227,6 +231,8 @@ def render_system_settings(
             "Уведомления отправляются для новых и эскалированных инцидентов. "
             "Повторная отправка по тому же каналу подавляется автоматически."
         )
+        if str(settings.get("notifications_enabled", "0")) == "1" and str(settings.get("webhook_enabled", "0")) != "1" and str(settings.get("telegram_enabled", "0")) != "1":
+            st.info("Уведомления включены, но ни один канал не активирован. Выберите webhook и/или Telegram ниже.")
         severity_options = ["low", "medium", "high", "critical"]
         with st.form("notification_settings_form"):
             notify_col1, notify_col2 = st.columns([1.0, 1.2])

@@ -22,6 +22,22 @@ from analytics.access import (
 from services.source_health import normalize_source_runtime_status
 
 
+def _build_dashboard_guidance(*, video_sources: list[dict], worker_statuses: list[dict], incidents: list[dict]) -> list[str]:
+    guidance = []
+    active_sources = [source for source in video_sources if source.get("is_active")]
+    if not video_sources:
+        guidance.append("Камеры ещё не добавлены. Начните с раздела подключения камер и сохраните хотя бы один production-источник.")
+    elif not active_sources:
+        guidance.append("Источники есть, но ни один не активирован. Включите хотя бы одну production-камеру для запуска worker-first контура.")
+    elif not worker_statuses:
+        guidance.append("Worker ещё не записал статусы камер. Запустите worker и дождитесь первого heartbeat.")
+    elif all(not status.get("is_connected") for status in worker_statuses):
+        guidance.append("Ни одна камера сейчас не online. Проверьте подключение, статусы камер и логи worker.")
+    if active_sources and not incidents:
+        guidance.append("Активные камеры есть, но инцидентов пока нет. Это нормально для спокойного периода или до появления первых событий.")
+    return guidance
+
+
 def render_dashboard(
     st,
     *,
@@ -41,6 +57,7 @@ def render_dashboard(
     severity_distribution = build_incident_severity_distribution(incidents)
     active_point = access_points[0]["name"] if access_points else "не задана"
     operator_count = sum(1 for employee in employees if employee.get("status") == "active")
+    guidance_items = _build_dashboard_guidance(video_sources=video_sources, worker_statuses=worker_statuses, incidents=incidents)
 
     top1, top2, top3, top4, top5, top6 = st.columns(6)
     top1.metric("Камер online", summary["online_cameras"])
@@ -56,6 +73,9 @@ def render_dashboard(
     second3.metric("Камер offline", health_summary["offline"])
     second4.metric("Ложные срабатывания", incident_summary["false_positive"])
 
+    for message in guidance_items:
+        st.info(message)
+
     left_col, right_col = st.columns([1.25, 1.0], gap="large")
     with left_col:
         with st.container(border=True):
@@ -68,7 +88,12 @@ def render_dashboard(
             if active_status and active_status.get("last_snapshot_path") and Path(active_status["last_snapshot_path"]).exists():
                 st.image(active_status["last_snapshot_path"], width="stretch", caption=f"Источник обзора: {active_source['name']}")
             else:
-                st.info("Обзорный snapshot пока недоступен. Ниже остаются аналитические сводки по инцидентам и состоянию камер.")
+                if active_source:
+                    st.info(
+                        "Обзорный snapshot пока недоступен. Проверьте, что worker запущен, источник активирован и камера уже отдала первый кадр."
+                    )
+                else:
+                    st.info("Нет активного обзорного источника. Выберите и активируйте production-камеру в разделе подключения камер.")
             overview_col1, overview_col2, overview_col3, overview_col4 = st.columns(4)
             overview_col1.metric("Приоритетная зона", active_point)
             overview_col2.metric("Инцидентов за сегодня", summary["suspicious_today"])
@@ -108,6 +133,7 @@ def render_dashboard(
                     width="stretch",
                     hide_index=True,
                 )
+                st.caption("Риск по зонам появится после накопления инцидентов хотя бы по одной зоне.")
 
     with right_col:
         with st.container(border=True):
@@ -120,21 +146,35 @@ def render_dashboard(
                     width="stretch",
                     hide_index=True,
                 )
+                st.caption("Активных инцидентов сейчас нет. Очередь автоматически заполнится новыми или эскалированными кейсами.")
         with st.container(border=True):
             st.subheader("Распределение по серьезности")
             if severity_distribution.empty:
                 st.dataframe(pd.DataFrame(columns=["severity", "count"]), width="stretch", hide_index=True)
+                st.caption("Распределение появится после регистрации первых инцидентов.")
             else:
                 st.bar_chart(
                     severity_distribution.rename(columns={"severity": "Серьезность", "count": "Инцидентов"}).set_index("Серьезность")
                 )
         with st.container(border=True):
             st.subheader("Состояние камер и эксплуатационные риски")
-            st.dataframe(pd.DataFrame(source_risk_rows), width="stretch", hide_index=True)
+            if source_risk_rows:
+                st.dataframe(pd.DataFrame(source_risk_rows), width="stretch", hide_index=True)
+            else:
+                st.dataframe(
+                    pd.DataFrame(columns=["Источник", "Статус", "Соединение", "FPS", "Активных инцидентов", "Критических", "Reconnect", "Последняя ошибка"]),
+                    width="stretch",
+                    hide_index=True,
+                )
+                st.caption("После добавления камер и первого heartbeat worker здесь появятся эксплуатационные статусы.")
         with st.container(border=True):
             st.subheader("Топ инцидентов и сбои")
             top_events = build_top_event_types(events, limit=6)
-            st.dataframe(top_events.rename(columns={"event_type": "Тип инцидента", "count": "Количество"}), width="stretch", hide_index=True)
+            if top_events.empty:
+                st.dataframe(pd.DataFrame(columns=["Тип инцидента", "Количество"]), width="stretch", hide_index=True)
+                st.caption("Топ событий ещё не сформирован: журнал событий пока пуст.")
+            else:
+                st.dataframe(top_events.rename(columns={"event_type": "Тип инцидента", "count": "Количество"}), width="stretch", hide_index=True)
             offline_df = build_offline_source_summary(events)
             if offline_df.empty:
                 st.caption("За текущий период offline-инциденты по камерам не зафиксированы.")

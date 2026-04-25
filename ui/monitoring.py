@@ -442,7 +442,9 @@ def render_online_monitoring(
     }
     selectable_labels = [binding["label"] for binding in source_bindings]
     if not selectable_labels:
-        st.warning("Нет доступных источников для мониторинга.")
+        st.warning(
+            "Нет доступных источников для мониторинга. Добавьте и активируйте хотя бы одну production-камеру в разделе подключения камер, затем запустите worker."
+        )
         return
 
     standalone_binding = _resolve_standalone_binding(
