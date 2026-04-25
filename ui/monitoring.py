@@ -1266,19 +1266,19 @@ def _render_standalone_live_window(
         f"""
         <style>
             [data-testid="stAppViewContainer"],
-            [data-testid="stMainBlockContainer"] {
+            [data-testid="stMainBlockContainer"] {{
                 background: #000 !important;
-            }
+            }}
             [data-testid="stImage"] img,
-            video {
+            video {{
                 width: 100vw !important;
                 height: 100vh !important;
                 object-fit: {object_fit} !important;
                 background: #000 !important;
                 margin: 0 !important;
                 display: block !important;
-            }
-            .standalone-overlay {
+            }}
+            .standalone-overlay {{
                 position: fixed;
                 top: 18px;
                 left: 18px;
@@ -1290,7 +1290,7 @@ def _render_standalone_live_window(
                 padding: 10px 14px;
                 backdrop-filter: blur(8px);
                 font-size: 14px;
-            }
+            }}
         </style>
         """,
         unsafe_allow_html=True,
