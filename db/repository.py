@@ -2844,8 +2844,8 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
             "source_type": "usb_camera",
             "source_url": "0",
             "location": "Пост охраны",
-            "is_active": 0,
-            "last_seen": now_ts - 3600,
+            "is_active": 1,
+            "last_seen": now_ts - 42,
             "description": "Локальная камера сервера",
             "config": {"enable_roi": False},
         },
@@ -2854,9 +2854,19 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
             "source_type": "browser_camera",
             "source_url": "browser_camera",
             "location": "АРМ оператора",
-            "is_active": 0,
+            "is_active": 1,
             "last_seen": None,
             "description": "Клиентский поток оператора",
+            "config": {"enable_roi": False},
+        },
+        {
+            "name": "iPhone Safari Camera",
+            "source_type": "browser_camera",
+            "source_url": "browser_camera",
+            "location": "mobile",
+            "is_active": 1,
+            "last_seen": None,
+            "description": "Мобильная браузерная камера iPhone",
             "config": {"enable_roi": False},
         },
     ]
@@ -2900,8 +2910,9 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
     worker_rows = [
         (source_ids[0], "online", 1, now_ts - 5, now_ts - 8, 12.8, 1, "", "", now_ts),
         (source_ids[1], "online", 1, now_ts - 18, now_ts - 24, 9.6, 3, "", "", now_ts),
-        (source_ids[2], "offline", 0, now_ts - 640, now_ts - 710, 0.0, 7, "Источник временно недоступен", "", now_ts),
+        (source_ids[2], "online", 1, now_ts - 11, now_ts - 15, 7.4, 2, "", "", now_ts),
         (source_ids[3], "standby", 0, None, None, 0.0, 0, "", "", now_ts),
+        (source_ids[4], "standby", 0, None, None, 0.0, 0, "", "", now_ts),
     ]
     conn.executemany(
         """

@@ -70,6 +70,7 @@ from ui.sources import render_video_sources
 from ui.zones import render_zones
 
 PRODUCTION_SOURCE_TYPES = {"rtsp", "stream_url", "usb_camera"}
+OPERATOR_MONITOR_SOURCE_TYPES = PRODUCTION_SOURCE_TYPES | {"browser_camera"}
 
 
 # WebRTC worker threads emit a harmless Streamlit context warning on every frame.
@@ -120,6 +121,7 @@ def main():
     system_settings = load_system_settings()
     video_sources = load_video_sources()
     production_video_sources = [source for source in video_sources if source.get("source_type") in PRODUCTION_SOURCE_TYPES]
+    operator_monitor_sources = [source for source in video_sources if source.get("source_type") in OPERATOR_MONITOR_SOURCE_TYPES]
     access_context = build_access_context(st.session_state)
     if standalone_live_mode:
         sidebar_state = {
@@ -344,7 +346,7 @@ def main():
         _, class_meta = build_class_meta(model.names, ANIMAL_CLASSES)
         render_online_monitoring(
             st,
-            active_sources=[source for source in production_video_sources if source.get("is_active")],
+            active_sources=[source for source in operator_monitor_sources if source.get("is_active")],
             worker_statuses=worker_statuses,
             events=events,
             model_name=sidebar_state["model_name"],

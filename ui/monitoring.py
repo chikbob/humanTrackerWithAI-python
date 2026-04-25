@@ -443,7 +443,7 @@ def render_online_monitoring(
     selectable_labels = [binding["label"] for binding in source_bindings]
     if not selectable_labels:
         st.warning(
-            "Нет доступных источников для мониторинга. Добавьте и активируйте хотя бы одну production-камеру в разделе подключения камер, затем запустите worker."
+            "Нет доступных источников для мониторинга. Активируйте хотя бы одну серверную камеру или browser-live источник оператора в разделе подключения камер."
         )
         return
 
@@ -467,7 +467,7 @@ def render_online_monitoring(
             "Источники онлайн-мониторинга",
             options=selectable_labels,
             key="monitoring_selected_labels",
-            help="В операторский мониторинг попадают только production-камеры, подключенные через серверный ingest/worker контур.",
+            help="В операторский мониторинг попадают активные серверные камеры и выделенные browser-live источники оператора.",
         )
         if not selected_labels:
             selected_labels = default_selection
@@ -644,7 +644,7 @@ def render_online_monitoring(
                     unsafe_allow_html=True,
                 )
             st.markdown(
-                '<div class="video-wall-note">Видеостена использует только production-камеры из серверного контура. Демонстрационные и browser-live сценарии вынесены в отдельный лабораторный раздел.</div>',
+                '<div class="video-wall-note">Видеостена использует активные серверные камеры и выделенные browser-live источники оператора. Основной browser-live источник можно держать главным в фокусном режиме.</div>',
                 unsafe_allow_html=True,
             )
             _render_source_layout(
@@ -686,25 +686,28 @@ def render_online_monitoring(
 
     if not standalone_mode and not active_sources:
         st.info(
-            "В production-контуре пока нет активных камер. Добавьте RTSP/HLS/USB-источник в разделе "
-            "«Подключение камер», после чего активируйте его для операторского мониторинга."
+            "В операторском контуре пока нет активных источников. Добавьте RTSP/HLS/USB-камеру или browser-live источник "
+            "в разделе «Подключение камер», после чего активируйте его для мониторинга."
         )
 
 
 def _build_source_bindings(active_sources: list[dict], statuses_by_id: dict) -> list[dict]:
     bindings = []
     for source in active_sources:
+        source_type = source.get("source_type")
+        source_name = source.get("name") or "Источник"
         bindings.append(
             {
                 "source_id": source["id"],
-                "kind": "production",
-                "kind_label": source["source_type"],
+                "kind": "browser_camera" if source_type == "browser_camera" else "production",
+                "kind_label": source_type,
                 "source": source,
                 "status": statuses_by_id.get(source["id"], {}),
-                "name": source["name"],
-                "label": f"{source['name']} [{source['source_type']}]",
+                "name": source_name,
+                "label": f"{source_name} [{source_type}]",
             }
         )
+    bindings.sort(key=_monitoring_binding_priority)
     return bindings
 
 
@@ -717,6 +720,9 @@ def _resolve_default_selection(source_bindings: list[dict], preferred_source: st
         for binding in source_bindings:
             if binding["kind"] == "browser_camera":
                 return [binding["label"]]
+    preferred_binding = _find_browser_operator_binding(source_bindings)
+    if preferred_binding is not None:
+        return [preferred_binding["label"]]
     return [source_bindings[0]["label"]]
 
 
@@ -738,6 +744,21 @@ def _resolve_standalone_binding(source_bindings: list[dict], *, preferred_source
 
 def _prioritize_primary_binding(bindings: list[dict], primary_binding: dict) -> list[dict]:
     return [primary_binding] + [binding for binding in bindings if binding["label"] != primary_binding["label"]]
+
+
+def _find_browser_operator_binding(bindings: list[dict]) -> dict | None:
+    for binding in bindings:
+        if binding["name"] == "Браузер оператора":
+            return binding
+    return None
+
+
+def _monitoring_binding_priority(binding: dict) -> tuple[int, str]:
+    if binding.get("name") == "Браузер оператора":
+        return (0, binding.get("label") or "")
+    if binding.get("kind") == "browser_camera":
+        return (1, binding.get("label") or "")
+    return (2, binding.get("label") or "")
 
 
 def _resolve_binding_last_frame_at(binding: dict, session_state):
