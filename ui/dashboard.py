@@ -9,8 +9,11 @@ import pandas as pd
 
 from analytics.access import (
     build_camera_health_summary,
+    build_incident_age_buckets,
     build_incident_hourly_distribution,
+    build_incident_queue_breakdown,
     build_incident_queue_rows,
+    build_incident_sla_summary,
     build_incident_severity_distribution,
     build_incident_status_summary,
     build_kpi_summary,
@@ -63,7 +66,10 @@ def render_dashboard(
     )
     zone_risk_rows = build_zone_risk_rows(incidents)
     source_risk_rows = build_source_risk_rows(video_sources, worker_statuses, incidents)
+    incident_queue_breakdown = build_incident_queue_breakdown(incidents)
     incident_queue_rows = build_incident_queue_rows(incidents, limit=12)
+    incident_sla_summary = build_incident_sla_summary(incidents)
+    incident_age_buckets = build_incident_age_buckets(incidents)
     operator_workload_rows = build_operator_workload_rows(incidents, limit=8)
     severity_distribution = build_incident_severity_distribution(incidents)
     active_point = access_points[0]["name"] if access_points else "не задана"
@@ -87,6 +93,11 @@ def render_dashboard(
     third1.metric("Coverage active камер, %", operational_summary["coverage_ratio"])
     third2.metric("Active incidents без owner", operational_summary["active_incidents_unassigned"])
     third3.metric("Operational status", operational_summary["status"])
+    fourth1, fourth2, fourth3, fourth4 = st.columns(4)
+    fourth1.metric("New", next((row["Кейсов"] for row in incident_queue_breakdown if row["Статус"] == "new"), 0))
+    fourth2.metric("In progress", next((row["Кейсов"] for row in incident_queue_breakdown if row["Статус"] == "in_progress"), 0))
+    fourth3.metric("On hold", next((row["Кейсов"] for row in incident_queue_breakdown if row["Статус"] == "on_hold"), 0))
+    fourth4.metric("SLA overdue", incident_sla_summary["overdue"])
 
     for message in guidance_items:
         st.info(message)
@@ -170,6 +181,18 @@ def render_dashboard(
                     hide_index=True,
                 )
                 st.caption("Активных инцидентов сейчас нет. Очередь автоматически заполнится новыми или эскалированными кейсами.")
+        with st.container(border=True):
+            st.subheader("SLA по активным кейсам")
+            sla_col1, sla_col2, sla_col3, sla_col4 = st.columns(4)
+            sla_col1.metric("Fresh", incident_sla_summary["fresh"])
+            sla_col2.metric("Due soon", incident_sla_summary["due_soon"])
+            sla_col3.metric("Overdue", incident_sla_summary["overdue"])
+            sla_col4.metric("Max age, мин", incident_sla_summary["oldest_age_minutes"])
+            st.dataframe(pd.DataFrame(incident_queue_breakdown), width="stretch", hide_index=True)
+            if any(row["Кейсов"] for row in incident_age_buckets):
+                st.bar_chart(pd.DataFrame(incident_age_buckets).set_index("Возраст"))
+            else:
+                st.caption("Возрастные SLA bucket'ы появятся после регистрации активных кейсов.")
         with st.container(border=True):
             st.subheader("Нагрузка по ответственным")
             if operator_workload_rows:

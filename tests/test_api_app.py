@@ -112,7 +112,10 @@ class ApiAppTests(unittest.TestCase):
         payload = response.json()
         self.assertIn("summary", payload)
         self.assertIn("incidents_summary", payload)
+        self.assertIn("incident_queues", payload)
         self.assertIn("incident_queue", payload)
+        self.assertIn("incident_sla", payload)
+        self.assertIn("incident_age_buckets", payload)
         self.assertIn("operator_workload", payload)
         self.assertEqual(len(payload["recent_events"]), 1)
         self.assertEqual(payload["recent_events"][0]["event_id"], "evt-api-1")
@@ -133,6 +136,8 @@ class ApiAppTests(unittest.TestCase):
         incident_id = payload["items"][0]["id"]
         self.assertIn("summary", payload)
         self.assertEqual(payload["summary"]["unassigned_active"], 1)
+        self.assertIn("status_breakdown", payload["summary"])
+        self.assertIn("sla_summary", payload["summary"])
 
         update_response = self.client.put(
             f"/api/v1/incidents/{incident_id}/status",

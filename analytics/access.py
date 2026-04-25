@@ -20,6 +20,7 @@ SUSPICIOUS_EVENT_TYPES = {
 
 ACTIVE_INCIDENT_STATUSES = {"new", "acknowledged", "in_progress", "on_hold", "escalated"}
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+INCIDENT_STATUS_ORDER = ("new", "acknowledged", "in_progress", "on_hold", "escalated", "resolved", "false_positive")
 
 
 def infer_worker_source_id(session_id: Optional[str]) -> Optional[int]:
@@ -178,6 +179,64 @@ def build_incident_severity_distribution(incidents: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def build_incident_queue_breakdown(incidents: list[dict]) -> list[dict]:
+    active_incidents = [incident for incident in incidents if incident.get("status") in ACTIVE_INCIDENT_STATUSES]
+    counter = Counter(incident.get("status") or "unknown" for incident in active_incidents)
+    rows = [
+        {"Статус": status, "Кейсов": counter.get(status, 0)}
+        for status in ("new", "acknowledged", "in_progress", "on_hold", "escalated")
+    ]
+    return rows
+
+
+def build_incident_sla_summary(incidents: list[dict]) -> dict:
+    now_ts = datetime.now().timestamp()
+    active_incidents = [incident for incident in incidents if incident.get("status") in ACTIVE_INCIDENT_STATUSES]
+    fresh = 0
+    due_soon = 0
+    overdue = 0
+    oldest_age_minutes = 0.0
+    for incident in active_incidents:
+        age_minutes = _incident_age_minutes(incident, now_ts=now_ts)
+        if age_minutes > 15:
+            overdue += 1
+        elif age_minutes >= 10:
+            due_soon += 1
+        else:
+            fresh += 1
+        oldest_age_minutes = max(oldest_age_minutes, age_minutes)
+    return {
+        "active": len(active_incidents),
+        "fresh": fresh,
+        "due_soon": due_soon,
+        "overdue": overdue,
+        "oldest_age_minutes": round(oldest_age_minutes, 1),
+    }
+
+
+def build_incident_age_buckets(incidents: list[dict]) -> list[dict]:
+    now_ts = datetime.now().timestamp()
+    buckets = {
+        "0-5 мин": 0,
+        "5-15 мин": 0,
+        "15-30 мин": 0,
+        "30+ мин": 0,
+    }
+    for incident in incidents:
+        if incident.get("status") not in ACTIVE_INCIDENT_STATUSES:
+            continue
+        age_minutes = _incident_age_minutes(incident, now_ts=now_ts)
+        if age_minutes < 5:
+            buckets["0-5 мин"] += 1
+        elif age_minutes < 15:
+            buckets["5-15 мин"] += 1
+        elif age_minutes < 30:
+            buckets["15-30 мин"] += 1
+        else:
+            buckets["30+ мин"] += 1
+    return [{"Возраст": bucket, "Кейсов": count} for bucket, count in buckets.items()]
+
+
 def build_incident_queue_rows(incidents: list[dict], limit: int = 10) -> list[dict]:
     now_ts = datetime.now().timestamp()
     active_incidents = sorted(
@@ -190,8 +249,7 @@ def build_incident_queue_rows(incidents: list[dict], limit: int = 10) -> list[di
     )
     rows = []
     for incident in active_incidents[:limit]:
-        started_at = float(incident.get("started_at") or 0.0)
-        age_minutes = round(max(0.0, now_ts - started_at) / 60.0, 1) if started_at else 0.0
+        age_minutes = _incident_age_minutes(incident, now_ts=now_ts)
         rows.append(
             {
                 "ID": incident.get("id"),
@@ -231,7 +289,7 @@ def build_operator_workload_rows(incidents: list[dict], *, limit: int = 6) -> li
             bucket["Critical"] += 1
         started_at = float(incident.get("started_at") or 0.0)
         if started_at:
-            if (now_ts - started_at) > 15 * 60:
+            if _incident_age_minutes(incident, now_ts=now_ts) > 15:
                 bucket["Overdue"] += 1
             bucket["Последний кейс"] = max(bucket["Последний кейс"], started_at)
     rows = sorted(
@@ -352,6 +410,14 @@ def _fmt_ts_short(timestamp_value):
     if not timestamp_value:
         return "—"
     return datetime.fromtimestamp(float(timestamp_value)).strftime("%H:%M:%S")
+
+
+def _incident_age_minutes(incident: dict, *, now_ts: float | None = None) -> float:
+    now_ts = now_ts if now_ts is not None else datetime.now().timestamp()
+    started_at = float(incident.get("started_at") or 0.0)
+    if not started_at:
+        return 0.0
+    return round(max(0.0, now_ts - started_at) / 60.0, 1)
 
 
 def build_monitoring_source_cards(

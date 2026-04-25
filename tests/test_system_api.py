@@ -37,6 +37,9 @@ class SystemApiTests(unittest.TestCase):
         self.assertEqual(summary["unassigned_active"], 0)
         self.assertEqual(summary["mean_ack_minutes"], 0.75)
         self.assertEqual(summary["mean_resolution_minutes"], 5.0)
+        self.assertEqual(summary["status_breakdown"]["in_progress"], 1)
+        self.assertEqual(summary["status_breakdown"]["resolved"], 1)
+        self.assertEqual(summary["sla_summary"]["active"], 1)
 
 
 if __name__ == "__main__":

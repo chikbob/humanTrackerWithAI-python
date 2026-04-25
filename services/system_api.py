@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import time
 
-from analytics.access import build_incident_queue_rows, build_kpi_summary, build_operator_workload_rows, enrich_event_rows
+from analytics.access import (
+    build_incident_age_buckets,
+    build_incident_queue_breakdown,
+    build_incident_queue_rows,
+    build_incident_sla_summary,
+    build_kpi_summary,
+    build_operator_workload_rows,
+    enrich_event_rows,
+)
 from db.repository import (
     load_access_points,
     load_audit_logs,
@@ -34,6 +42,11 @@ def build_incident_summary(incidents: list[dict]) -> dict:
             resolution_durations.append(max(0.0, float(resolved_at) - started_at) / 60.0)
         if incident.get("status") in active_statuses and started_at and (now_ts - started_at) > 15 * 60:
             overdue_active += 1
+    status_breakdown = {
+        status: sum(1 for incident in incidents if incident.get("status") == status)
+        for status in ("new", "acknowledged", "in_progress", "on_hold", "escalated", "resolved", "false_positive")
+    }
+    sla_summary = build_incident_sla_summary(incidents)
     return {
         "total": len(incidents),
         "active": sum(1 for incident in incidents if incident.get("status") in active_statuses),
@@ -50,6 +63,8 @@ def build_incident_summary(incidents: list[dict]) -> dict:
         "mean_ack_minutes": round(sum(ack_durations) / len(ack_durations), 2) if ack_durations else 0.0,
         "mean_resolution_minutes": round(sum(resolution_durations) / len(resolution_durations), 2) if resolution_durations else 0.0,
         "overdue_active": overdue_active,
+        "status_breakdown": status_breakdown,
+        "sla_summary": sla_summary,
     }
 
 
@@ -66,7 +81,10 @@ def load_dashboard_summary(*, event_limit: int = 200) -> dict:
         "settings": settings,
         "summary": build_kpi_summary(events, worker_statuses),
         "incidents_summary": build_incident_summary(incidents),
+        "incident_queues": build_incident_queue_breakdown(incidents),
         "incident_queue": build_incident_queue_rows(incidents, limit=12),
+        "incident_sla": build_incident_sla_summary(incidents),
+        "incident_age_buckets": build_incident_age_buckets(incidents),
         "operator_workload": build_operator_workload_rows(incidents, limit=8),
         "telemetry": build_worker_runtime_metrics(
             video_sources=video_sources,

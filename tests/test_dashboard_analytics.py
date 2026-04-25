@@ -1,9 +1,13 @@
 import unittest
+import unittest.mock
 
 try:
     from analytics.access import (
         build_camera_health_summary,
+        build_incident_age_buckets,
         build_incident_queue_rows,
+        build_incident_queue_breakdown,
+        build_incident_sla_summary,
         build_incident_status_summary,
         build_operator_workload_rows,
         build_source_risk_rows,
@@ -11,7 +15,10 @@ try:
     )
 except ModuleNotFoundError:  # pragma: no cover - optional analytics dependency in minimal env
     build_camera_health_summary = None
+    build_incident_age_buckets = None
     build_incident_queue_rows = None
+    build_incident_queue_breakdown = None
+    build_incident_sla_summary = None
     build_incident_status_summary = None
     build_operator_workload_rows = None
     build_source_risk_rows = None
@@ -124,6 +131,32 @@ class DashboardAnalyticsTests(unittest.TestCase):
         self.assertEqual(rows[2]["ID"], 1)
         self.assertEqual(rows[0]["Owner"], "не назначен")
         self.assertIn("SLA", rows[0])
+
+    def test_incident_queue_breakdown_and_sla_summary(self):
+        now = 2_000.0
+        incidents = [
+            {"status": "new", "started_at": now - 4 * 60},
+            {"status": "in_progress", "started_at": now - 12 * 60},
+            {"status": "on_hold", "started_at": now - 18 * 60},
+            {"status": "resolved", "started_at": now - 40 * 60},
+        ]
+
+        with unittest.mock.patch("analytics.access.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value.timestamp.return_value = now
+            breakdown = build_incident_queue_breakdown(incidents)
+            sla_summary = build_incident_sla_summary(incidents)
+            age_buckets = build_incident_age_buckets(incidents)
+
+        self.assertEqual(next(row["Кейсов"] for row in breakdown if row["Статус"] == "new"), 1)
+        self.assertEqual(next(row["Кейсов"] for row in breakdown if row["Статус"] == "on_hold"), 1)
+        self.assertEqual(sla_summary["active"], 3)
+        self.assertEqual(sla_summary["fresh"], 1)
+        self.assertEqual(sla_summary["due_soon"], 1)
+        self.assertEqual(sla_summary["overdue"], 1)
+        self.assertEqual(sla_summary["oldest_age_minutes"], 18.0)
+        self.assertEqual(next(row["Кейсов"] for row in age_buckets if row["Возраст"] == "0-5 мин"), 1)
+        self.assertEqual(next(row["Кейсов"] for row in age_buckets if row["Возраст"] == "5-15 мин"), 1)
+        self.assertEqual(next(row["Кейсов"] for row in age_buckets if row["Возраст"] == "15-30 мин"), 1)
 
     def test_operator_workload_rows_group_by_owner(self):
         incidents = [
