@@ -8,6 +8,8 @@ from typing import Optional
 
 import pandas as pd
 
+from services.source_health import normalize_source_runtime_status
+
 
 SUSPICIOUS_EVENT_TYPES = {
     "prolonged_presence_near_entry",
@@ -124,18 +126,18 @@ def build_source_status_rows(sources: list[dict], statuses: list[dict]) -> list[
     statuses_by_id = {status["source_id"]: status for status in statuses}
     rows = []
     for source in sources:
-        status = statuses_by_id.get(source["id"], {})
+        status = normalize_source_runtime_status(statuses_by_id.get(source["id"], {}))
         rows.append(
             {
                 "source_id": source["id"],
                 "Источник": source["name"],
                 "Тип": source["source_type"],
                 "Активен": "да" if source.get("is_active") else "нет",
-                "Статус": status.get("status", "idle"),
-                "Соединение": "online" if status.get("is_connected") else "offline",
+                "Статус": status["health_status"],
+                "Соединение": status["connection_status"],
                 "FPS": round(status.get("fps") or 0.0, 2),
-                "Heartbeat": datetime.fromtimestamp(status["last_heartbeat"]).strftime("%H:%M:%S")
-                if status.get("last_heartbeat")
+                "Heartbeat": datetime.fromtimestamp(statuses_by_id.get(source["id"], {}).get("last_heartbeat")).strftime("%H:%M:%S")
+                if statuses_by_id.get(source["id"], {}).get("last_heartbeat")
                 else "—",
             }
         )
@@ -248,12 +250,12 @@ def build_source_risk_rows(sources: list[dict], statuses: list[dict], incidents:
         source_incidents = incidents_by_source.get(source["id"], [])
         active_incidents = [incident for incident in source_incidents if incident.get("status") in ACTIVE_INCIDENT_STATUSES]
         critical_incidents = [incident for incident in source_incidents if incident.get("severity") == "critical"]
-        status = statuses_by_id.get(source["id"], {})
+        status = normalize_source_runtime_status(statuses_by_id.get(source["id"], {}))
         rows.append(
             {
                 "Источник": source["name"],
-                "Статус": status.get("status") or ("online" if status.get("is_connected") else "offline"),
-                "Соединение": "online" if status.get("is_connected") else "offline",
+                "Статус": status["health_status"],
+                "Соединение": status["connection_status"],
                 "FPS": round(status.get("fps") or 0.0, 2),
                 "Активных инцидентов": len(active_incidents),
                 "Критических": len(critical_incidents),
@@ -261,7 +263,8 @@ def build_source_risk_rows(sources: list[dict], statuses: list[dict], incidents:
                 "Последняя ошибка": status.get("last_error") or "—",
             }
         )
-    rows.sort(key=lambda row: (row["Соединение"] == "online", -row["Активных инцидентов"], -row["Критических"], row["FPS"]))
+    priority = {"offline": 0, "degraded": 1, "healthy": 2, "idle": 3}
+    rows.sort(key=lambda row: (priority.get(row["Статус"], 99), -row["Активных инцидентов"], -row["Критических"], row["FPS"]))
     return rows
 
 
@@ -286,13 +289,11 @@ def build_camera_health_summary(sources: list[dict], statuses: list[dict]) -> di
     degraded = 0
     healthy = 0
     for source in sources:
-        status = statuses_by_id.get(source["id"], {})
-        if not status.get("is_connected"):
+        status = normalize_source_runtime_status(statuses_by_id.get(source["id"], {}))
+        if status["health_status"] == "offline":
             offline += 1
             continue
-        fps = float(status.get("fps") or 0.0)
-        reconnect_count = int(status.get("reconnect_count") or 0)
-        if fps < 3.0 or reconnect_count > 0 or status.get("last_error"):
+        if status["health_status"] == "degraded":
             degraded += 1
         else:
             healthy += 1
@@ -324,20 +325,20 @@ def build_monitoring_source_cards(
 
     cards = []
     for source in sources:
-        status = statuses_by_id.get(source["id"], {})
-        status_name = status.get("status") or ("online" if status.get("is_connected") else "offline")
-        if status_name == "offline" and status.get("reconnect_count"):
-            status_name = "reconnecting"
+        raw_status = statuses_by_id.get(source["id"], {})
+        status = normalize_source_runtime_status(raw_status)
         cards.append(
             {
                 "source_id": source["id"],
                 "name": source["name"],
                 "source_type": source["source_type"],
-                "status": status_name,
+                "status": status["health_status"],
+                "connection_status": status["connection_status"],
+                "health_status": status["health_status"],
                 "is_connected": bool(status.get("is_connected")),
                 "fps": round(status.get("fps") or 0.0, 2),
                 "last_frame_at": status.get("last_frame_at"),
-                "last_snapshot_path": status.get("last_snapshot_path"),
+                "last_snapshot_path": raw_status.get("last_snapshot_path"),
                 "last_error": status.get("last_error") or "",
                 "recent_event_count": recent_event_counter.get(source["id"], 0),
                 "location": source.get("location") or "",

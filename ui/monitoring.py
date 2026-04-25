@@ -21,6 +21,7 @@ from analytics.access import build_monitoring_source_cards
 from config.rtc_config import build_rtc_configuration, describe_rtc_environment
 from core.detection import track_and_draw_live
 from services.events import add_notification, process_disappeared_tracks, register_detection_and_entry_events
+from services.source_health import normalize_source_runtime_status
 from services.state import finish_session, get_current_session, log_frame, start_session
 from ui.sidebar import ANIMAL_CLASSES
 from utils.performance import DEFAULT_SESSION_PERSIST_INTERVAL, DEFAULT_UI_REFRESH_INTERVAL_SEC
@@ -62,7 +63,10 @@ SOURCE_KIND_LABELS = {
 }
 STATUS_LABELS = {
     "online": "online",
+    "healthy": "healthy",
+    "degraded": "degraded",
     "offline": "offline",
+    "connecting": "connecting",
     "reconnecting": "reconnecting",
     "live": "live",
     "ready": "ready",
@@ -195,8 +199,11 @@ def _format_status_label(status: str) -> str:
 def _status_chip_color(status: str) -> str:
     palette = {
         "online": "rgba(16,185,129,.18)",
+        "healthy": "rgba(16,185,129,.18)",
         "live": "rgba(16,185,129,.18)",
         "ready": "rgba(59,130,246,.18)",
+        "degraded": "rgba(245,158,11,.18)",
+        "connecting": "rgba(59,130,246,.18)",
         "reconnecting": "rgba(245,158,11,.18)",
         "offline": "rgba(239,68,68,.18)",
         "standby": "rgba(148,163,184,.18)",
@@ -591,6 +598,7 @@ def render_online_monitoring(
                         title=binding["name"],
                         source_type=binding["kind_label"],
                         status=_resolve_binding_status(binding, session_state, source_card=card),
+                        connection_status=card.get("connection_status", _resolve_binding_status(binding, session_state, source_card=card)),
                         fps=_resolve_binding_fps(binding, session_state, source_card=card),
                         last_frame_at=_fmt_ts(_resolve_binding_last_frame_at(binding, session_state)),
                         recent_event_count=card.get("recent_event_count", 0),
@@ -1114,7 +1122,18 @@ def _render_production_live_monitor(st, *, source: dict, source_status: dict, st
     return source_status.get("last_frame_at")
 
 
-def _render_source_status_badge(*, title: str, source_type: str, status: str, fps, last_frame_at: str, recent_event_count: int, error_text: str, live_window_url: str) -> str:
+def _render_source_status_badge(
+    *,
+    title: str,
+    source_type: str,
+    status: str,
+    connection_status: str = "",
+    fps,
+    last_frame_at: str,
+    recent_event_count: int,
+    error_text: str,
+    live_window_url: str,
+) -> str:
     status_color = _status_chip_color(status)
     error_html = f"<div style='margin-top:6px;color:#fca5a5'>{error_text}</div>" if error_text else ""
     return f"""
@@ -1127,6 +1146,7 @@ def _render_source_status_badge(*, title: str, source_type: str, status: str, fp
             <span class="source-status-chip" style="background:{status_color};">{_format_status_label(status)}</span>
         </div>
         <div class="source-status-meta">
+            <div>Линия: {connection_status or '—'}</div>
             <div>FPS: {fps if fps not in (None, '') else '—'}</div>
             <div>События: {recent_event_count}</div>
             <div>Последний кадр: {last_frame_at}</div>
@@ -1138,12 +1158,14 @@ def _render_source_status_badge(*, title: str, source_type: str, status: str, fp
 
 
 def _render_monitoring_wall_summary(st, *, displayed_bindings: list[dict], primary_binding: dict, worker_statuses: list[dict], source_cards: dict):
-    online_count = sum(1 for status in worker_statuses if status.get("is_connected"))
+    normalized_statuses = [normalize_source_runtime_status(status) for status in worker_statuses]
+    online_count = sum(1 for status in normalized_statuses if status["connection_status"] == "online")
+    degraded_count = sum(1 for status in normalized_statuses if status["health_status"] == "degraded")
     interactive_count = sum(1 for binding in displayed_bindings if binding["kind"] in {"browser_camera", "local_camera"})
     total_recent_events = sum((source_cards.get(binding.get("source_id")) or {}).get("recent_event_count", 0) for binding in displayed_bindings)
     st.markdown(
         f"""
-        <div class="video-wall-shell" style="display:grid;grid-template-columns:2.2fr .9fr .9fr .95fr;gap:10px;margin-bottom:10px;">
+        <div class="video-wall-shell" style="display:grid;grid-template-columns:2fr .8fr .8fr .8fr .9fr;gap:10px;margin-bottom:10px;">
             <div class="video-wall-toolbar" style="padding:12px 14px;border-radius:18px;background:linear-gradient(135deg, rgba(9,18,28,.92), rgba(16,30,44,.92));border:1px solid rgba(88,166,255,.18);margin-bottom:0;">
                 <div style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#7f9bb5;">Security Video Wall</div>
                 <div style="margin-top:4px;font-size:20px;font-weight:700;color:#eef6ff;">{primary_binding['name']}</div>
@@ -1156,6 +1178,10 @@ def _render_monitoring_wall_summary(st, *, displayed_bindings: list[dict], prima
             <div class="video-wall-toolbar" style="padding:12px 14px;margin-bottom:0;">
                 <div style="font-size:12px;color:#7f9bb5;text-transform:uppercase;">Online источники</div>
                 <div style="margin-top:6px;font-size:22px;font-weight:700;color:#7ee787;">{online_count}</div>
+            </div>
+            <div class="video-wall-toolbar" style="padding:12px 14px;margin-bottom:0;">
+                <div style="font-size:12px;color:#7f9bb5;text-transform:uppercase;">Degraded</div>
+                <div style="margin-top:6px;font-size:22px;font-weight:700;color:#fbbf24;">{degraded_count}</div>
             </div>
             <div class="video-wall-toolbar" style="padding:12px 14px;margin-bottom:0;">
                 <div style="font-size:12px;color:#7f9bb5;text-transform:uppercase;">Live / события</div>

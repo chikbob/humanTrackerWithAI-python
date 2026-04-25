@@ -19,6 +19,7 @@ from analytics.access import (
     build_top_event_types,
     build_zone_risk_rows,
 )
+from services.source_health import normalize_source_runtime_status
 
 
 def render_dashboard(
@@ -63,18 +64,21 @@ def render_dashboard(
             active_sources = [source for source in video_sources if source.get("is_active")]
             active_source = active_sources[0] if active_sources else None
             active_status = statuses_by_id.get(active_source["id"]) if active_source else None
+            active_health = normalize_source_runtime_status(active_status or {})
             if active_status and active_status.get("last_snapshot_path") and Path(active_status["last_snapshot_path"]).exists():
                 st.image(active_status["last_snapshot_path"], width="stretch", caption=f"Источник обзора: {active_source['name']}")
             else:
                 st.info("Обзорный snapshot пока недоступен. Ниже остаются аналитические сводки по инцидентам и состоянию камер.")
-            overview_col1, overview_col2, overview_col3 = st.columns(3)
+            overview_col1, overview_col2, overview_col3, overview_col4 = st.columns(4)
             overview_col1.metric("Приоритетная зона", active_point)
             overview_col2.metric("Инцидентов за сегодня", summary["suspicious_today"])
             overview_col3.metric("Обнаружений за сегодня", summary["detections_today"])
+            overview_col4.metric("Состояние источника", active_health["health_status"])
             if active_source:
                 st.caption(
                     f"Обзорный источник: {active_source['name']} · Тип: {active_source['source_type']} · "
-                    f"Локация: {active_source.get('location') or 'не указана'}"
+                    f"Локация: {active_source.get('location') or 'не указана'} · "
+                    f"Соединение: {active_health['connection_status']}"
                 )
 
         with st.container(border=True):

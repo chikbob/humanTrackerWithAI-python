@@ -7,6 +7,7 @@ from datetime import datetime
 import pandas as pd
 
 from config.app_config import AI_QUALITY_PROFILES, TRACKER_OPTIONS
+from services.source_health import normalize_source_runtime_status
 from services.source_service import build_source_setup_hint, validate_source_definition
 
 
@@ -230,7 +231,8 @@ def render_video_sources(
         )
         rows = []
         for source in video_sources:
-            status = statuses_by_source.get(source["id"], {})
+            raw_status = statuses_by_source.get(source["id"], {})
+            status = normalize_source_runtime_status(raw_status)
             rows.append(
                 {
                     "ID": source["id"],
@@ -239,9 +241,11 @@ def render_video_sources(
                     "Локация": source.get("location") or "",
                     "ROI": "вкл" if source.get("enable_roi") else "выкл",
                     "Активен": "да" if source.get("is_active") else "нет",
-                    "Статус": status.get("status", "idle"),
-                    "Последний heartbeat": _fmt_ts(status.get("last_heartbeat")),
+                    "Статус": status["health_status"],
+                    "Соединение": status["connection_status"],
+                    "Последний heartbeat": _fmt_ts(raw_status.get("last_heartbeat")),
                     "Последний кадр": _fmt_ts(status.get("last_frame_at")),
+                    "Ошибка": status.get("last_error") or "—",
                 }
             )
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
