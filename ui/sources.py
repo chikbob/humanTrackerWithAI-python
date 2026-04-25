@@ -7,6 +7,7 @@ from datetime import datetime
 import pandas as pd
 
 from config.app_config import AI_QUALITY_PROFILES, TRACKER_OPTIONS
+from services.source_service import build_source_setup_hint, validate_source_definition
 
 
 SOURCE_TYPES = {
@@ -39,6 +40,17 @@ def _render_source_processing_defaults():
         "rule_disappear_seconds": 5,
         "prolonged_presence_seconds": 10,
     }
+
+
+def _build_default_source_name(source_type: str, source_url: str) -> str:
+    source_url = (source_url or "").strip()
+    if source_type == "usb_camera":
+        return f"USB Camera {source_url or '0'}"
+    if source_type == "stream_url":
+        return "HTTP Stream Camera"
+    if source_type == "browser_camera":
+        return "Browser Live Camera"
+    return "RTSP Camera"
 
 
 def _render_source_processing_controls(st, *, prefix: str, source: dict | None = None):
@@ -239,28 +251,69 @@ def render_video_sources(
     )
 
     with tab_add:
+        st.subheader("Быстрое добавление камеры")
+        st.caption(
+            "Основной путь: вставьте RTSP/HTTP-адрес или индекс USB-камеры, проверьте подключение и сохраните. "
+            "Сложные ROI/AI-настройки скрыты ниже и нужны только при нестандартном сценарии."
+        )
+        draft_input = st.text_input(
+            "Адрес потока или индекс устройства",
+            key="quick_source_input",
+            placeholder="rtsp://... / https://... / 0",
+        )
+        source_hint = build_source_setup_hint(draft_input)
+        hint_col1, hint_col2 = st.columns([0.8, 1.2], gap="large")
+        with hint_col1:
+            st.info(f"Автоопределение: {source_hint['label']}")
+        with hint_col2:
+            st.caption(source_hint["help"])
+            st.code(source_hint["placeholder"])
+
         with st.form("create_video_source_form", clear_on_submit=True):
-            name = st.text_input("Наименование")
             source_type = st.selectbox(
                 "Тип production-источника",
                 options=list(PRODUCTION_SOURCE_TYPES),
+                index=list(PRODUCTION_SOURCE_TYPES).index(source_hint["source_type"])
+                if source_hint["source_type"] in PRODUCTION_SOURCE_TYPES
+                else 0,
                 format_func=lambda key: SOURCE_TYPES[key],
+                help="Можно оставить автоопределение или скорректировать вручную.",
             )
-            source_url_label = "URL / индекс устройства"
-            source_url_placeholder = ""
-            source_url = st.text_input(source_url_label, value=source_url_placeholder)
-            location = st.text_input("Локация")
-            description = st.text_area("Описание")
+            suggested_name = _build_default_source_name(source_type, draft_input)
+            name = st.text_input("Наименование", value=suggested_name)
+            source_url = st.text_input(
+                "URL / индекс устройства",
+                value=draft_input,
+                placeholder=build_source_setup_hint(draft_input or source_type)["placeholder"]
+                if draft_input
+                else build_source_setup_hint(source_type)["placeholder"],
+            )
+            location = st.text_input("Локация", placeholder="Например: Главная проходная")
+            description = st.text_area("Описание", placeholder="Необязательно. Например: Северный вход, обзор турникета.")
             is_active = st.checkbox("Сделать активным сразу", value=True)
-            processing_config = _render_source_processing_controls(st, prefix="create_source")
-            submitted = st.form_submit_button("Сохранить источник")
+            use_advanced = st.checkbox("Открыть расширенные настройки ROI/AI", value=False)
+            processing_config = (
+                _render_source_processing_controls(st, prefix="create_source")
+                if use_advanced
+                else _render_source_processing_defaults()
+            )
+            submitted = st.form_submit_button("Проверить и сохранить источник")
         if submitted:
-            normalized_source_url = source_url.strip()
+            validation_errors, normalized_source_url = validate_source_definition(
+                name=name,
+                source_type=source_type,
+                source_url=source_url,
+            )
             if not can_manage:
                 st.error("Недостаточно прав для добавления камер.")
-            elif not name.strip() or not normalized_source_url:
-                st.error("Необходимо указать название и значение источника.")
+            elif validation_errors:
+                for error_text in validation_errors:
+                    st.error(error_text)
             else:
+                success, message = test_connection_fn(source_type, normalized_source_url)
+                if not success:
+                    st.error(message)
+                    st.stop()
                 create_video_source_fn(
                     name=name,
                     source_type=source_type,
@@ -270,7 +323,7 @@ def render_video_sources(
                     is_active=is_active,
                     **processing_config,
                 )
-                st.success("Источник видеоданных добавлен.")
+                st.success("Источник видеоданных добавлен и успешно прошёл предварительную проверку.")
                 st.rerun()
 
     with tab_manage:
@@ -342,6 +395,11 @@ def render_video_sources(
         else:
             selected_label = st.selectbox("Источник для проверки", options=list(source_labels.keys()), key="source_check_select")
             selected = source_labels[selected_label]
+            selected_hint = build_source_setup_hint(selected["source_url"])
+            st.caption(
+                f"Тип: {SOURCE_TYPES.get(selected['source_type'], selected['source_type'])}. "
+                f"Ожидаемый формат: `{selected_hint['placeholder']}`"
+            )
             if st.button("Тест подключения"):
                 success, message = test_connection_fn(selected["source_type"], selected["source_url"])
                 if success:
