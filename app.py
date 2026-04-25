@@ -337,6 +337,7 @@ def main():
             video_sources=video_sources,
             access_points=access_points,
             employees=employees,
+            settings=system_settings,
         )
     elif section == "Оперативный мониторинг":
         model = load_model(sidebar_state["model_name"])

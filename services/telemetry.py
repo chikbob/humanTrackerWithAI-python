@@ -47,6 +47,95 @@ def build_worker_runtime_metrics(*, video_sources: list[dict], worker_statuses: 
     }
 
 
+def build_operational_summary(*, video_sources: list[dict], worker_statuses: list[dict], incidents: list[dict], settings: dict) -> dict:
+    telemetry = build_worker_runtime_metrics(
+        video_sources=video_sources,
+        worker_statuses=worker_statuses,
+        events=[],
+        settings=settings,
+    )
+    active_sources = [source for source in video_sources if source.get("is_active")]
+    active_source_ids = {source["id"] for source in active_sources}
+    statuses_by_source = {status["source_id"]: status for status in worker_statuses}
+    source_timeout = int(settings.get("source_timeout", 15) or 15)
+    issues = []
+
+    if not video_sources:
+        issues.append("В системе ещё нет зарегистрированных камер.")
+    elif not active_sources:
+        issues.append("Камеры добавлены, но ни одна production-камера не активирована.")
+
+    missing_status_ids = [source_id for source_id in active_source_ids if source_id not in statuses_by_source]
+    if active_sources and missing_status_ids:
+        issues.append("Worker ещё не записал heartbeat по части активных камер.")
+
+    if telemetry["source_count_offline"] > 0:
+        issues.append(f"Offline-источников: {telemetry['source_count_offline']}.")
+    if telemetry["source_count_degraded"] > 0:
+        issues.append(f"Degraded-источников: {telemetry['source_count_degraded']}.")
+    if telemetry["source_count_stale"] > 0:
+        issues.append(f"Источников со stale-кадрами: {telemetry['source_count_stale']} (таймаут {source_timeout} сек).")
+
+    active_incidents = [
+        incident for incident in incidents if incident.get("status") in {"new", "acknowledged", "in_progress", "on_hold", "escalated"}
+    ]
+    unassigned_active = [incident for incident in active_incidents if not (incident.get("assigned_to") or "").strip()]
+    if unassigned_active:
+        issues.append(f"Активных инцидентов без ответственного: {len(unassigned_active)}.")
+
+    if active_sources and not worker_statuses:
+        status = "degraded"
+    elif telemetry["source_count_offline"] > 0 or telemetry["source_count_stale"] > 0:
+        status = "degraded"
+    elif telemetry["source_count_degraded"] > 0:
+        status = "degraded"
+    else:
+        status = "ok"
+
+    readiness = "ready"
+    if not active_sources:
+        readiness = "not_ready"
+    elif missing_status_ids or telemetry["source_count_offline"] > 0:
+        readiness = "degraded"
+
+    coverage_ratio = round(
+        (telemetry["source_count_online"] / max(1, telemetry["source_count_active"])) * 100.0,
+        1,
+    ) if telemetry["source_count_active"] else 0.0
+
+    return {
+        "status": status,
+        "readiness": readiness,
+        "issues": issues,
+        "active_incidents_unassigned": len(unassigned_active),
+        "coverage_ratio": coverage_ratio,
+        "telemetry": telemetry,
+    }
+
+
+def build_health_payload(*, video_sources: list[dict], worker_statuses: list[dict], events: list[dict], incidents: list[dict], settings: dict) -> dict:
+    telemetry = build_worker_runtime_metrics(
+        video_sources=video_sources,
+        worker_statuses=worker_statuses,
+        events=events,
+        settings=settings,
+    )
+    operational = build_operational_summary(
+        video_sources=video_sources,
+        worker_statuses=worker_statuses,
+        incidents=incidents,
+        settings=settings,
+    )
+    status = "ok"
+    if telemetry["source_count_stale"] > 0 or operational["status"] != "ok":
+        status = "degraded"
+    return {
+        "status": status,
+        "telemetry": telemetry,
+        "operational": operational,
+    }
+
+
 def build_prometheus_metrics(metrics: dict) -> str:
     lines = []
     for key, value in metrics.items():

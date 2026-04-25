@@ -1,7 +1,12 @@
 import unittest
 import time
 
-from services.telemetry import build_prometheus_metrics, build_worker_runtime_metrics
+from services.telemetry import (
+    build_health_payload,
+    build_operational_summary,
+    build_prometheus_metrics,
+    build_worker_runtime_metrics,
+)
 
 
 class TelemetryTests(unittest.TestCase):
@@ -46,6 +51,30 @@ class TelemetryTests(unittest.TestCase):
         )
         self.assertEqual(metrics["source_count_online"], 1)
         self.assertEqual(metrics["source_count_degraded"], 1)
+
+    def test_build_operational_summary_flags_unassigned_active_incidents(self):
+        summary = build_operational_summary(
+            video_sources=[{"id": 1, "is_active": True}],
+            worker_statuses=[{"source_id": 1, "is_connected": True, "status": "online", "fps": 9.0, "reconnect_count": 0}],
+            incidents=[{"status": "new", "assigned_to": ""}],
+            settings={"source_timeout": "15"},
+        )
+        self.assertEqual(summary["coverage_ratio"], 100.0)
+        self.assertEqual(summary["active_incidents_unassigned"], 1)
+        self.assertTrue(summary["issues"])
+
+    def test_build_health_payload_includes_operational_section(self):
+        now_ts = time.time()
+        payload = build_health_payload(
+            video_sources=[{"id": 1, "is_active": True}],
+            worker_statuses=[{"source_id": 1, "is_connected": True, "status": "online", "fps": 10.0, "reconnect_count": 0, "last_frame_at": now_ts}],
+            events=[{"timestamp": now_ts, "is_suspicious": False}],
+            incidents=[],
+            settings={"source_timeout": "15"},
+        )
+        self.assertIn("telemetry", payload)
+        self.assertIn("operational", payload)
+        self.assertIn(payload["status"], {"ok", "degraded"})
 
 
 if __name__ == "__main__":

@@ -86,6 +86,17 @@ class ApiAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(response.json()["status"], {"ok", "degraded"})
         self.assertIn("telemetry", response.json())
+        self.assertIn("operational", response.json())
+
+    def test_liveness_and_readiness_endpoints(self):
+        live_response = self.client.get("/health/live")
+        self.assertEqual(live_response.status_code, 200)
+        self.assertEqual(live_response.json()["status"], "ok")
+
+        ready_response = self.client.get("/health/ready")
+        self.assertIn(ready_response.status_code, {200, 503})
+        self.assertIn("status", ready_response.json())
+        self.assertIn("issues", ready_response.json())
 
     def test_video_sources_endpoint_returns_processing_config(self):
         response = self.client.get("/api/v1/video-sources")
@@ -142,6 +153,15 @@ class ApiAppTests(unittest.TestCase):
         response = self.client.get("/metrics")
         self.assertEqual(response.status_code, 200)
         self.assertIn("human_tracker_source_count_total", response.text)
+        self.assertIn("human_tracker_source_count_degraded", response.text)
+
+    def test_telemetry_endpoint_returns_operational_summary(self):
+        response = self.client.get("/api/v1/telemetry")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("telemetry", payload)
+        self.assertIn("operational", payload)
+        self.assertIn("coverage_ratio", payload["operational"])
 
     def test_health_details_returns_dashboard_snapshot(self):
         response = self.client.get("/health/details")
@@ -149,6 +169,7 @@ class ApiAppTests(unittest.TestCase):
         payload = response.json()
         self.assertIn("summary", payload)
         self.assertIn("telemetry", payload)
+        self.assertIn("operational", payload)
 
     def test_audit_logs_endpoint_returns_items(self):
         repository.append_audit_log(

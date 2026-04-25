@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse
 from fastapi import FastAPI, HTTPException, Query
 
 from analytics.access import enrich_event_rows
@@ -22,7 +23,7 @@ from db.repository import (
     update_incident_status,
 )
 from services.system_api import build_incident_summary, load_dashboard_summary
-from services.telemetry import build_prometheus_metrics, build_worker_runtime_metrics
+from services.telemetry import build_health_payload, build_operational_summary, build_prometheus_metrics, build_worker_runtime_metrics
 
 
 def create_app() -> FastAPI:
@@ -39,14 +40,42 @@ def create_app() -> FastAPI:
         video_sources = load_video_sources()
         worker_statuses = load_worker_statuses()
         events = enrich_event_rows(load_events(limit=200), video_sources, worker_statuses)
-        telemetry = build_worker_runtime_metrics(
+        incidents = load_incidents(limit=200)
+        payload = build_health_payload(
             video_sources=video_sources,
             worker_statuses=worker_statuses,
             events=events,
+            incidents=incidents,
             settings=settings,
         )
-        status = "ok" if telemetry["source_count_stale"] == 0 else "degraded"
-        return {"status": status, "telemetry": telemetry}
+        return payload
+
+    @app.get("/health/live")
+    def health_live():
+        return {"status": "ok", "service": "api"}
+
+    @app.get("/health/ready")
+    def health_ready():
+        settings = load_system_settings()
+        video_sources = load_video_sources()
+        worker_statuses = load_worker_statuses()
+        incidents = load_incidents(limit=500)
+        operational = build_operational_summary(
+            video_sources=video_sources,
+            worker_statuses=worker_statuses,
+            incidents=incidents,
+            settings=settings,
+        )
+        ready = operational["readiness"] == "ready"
+        status_code = 200 if ready else 503
+        return JSONResponse(
+            status_code=status_code,
+            content={
+                "status": "ready" if ready else operational["readiness"],
+                "issues": operational["issues"],
+                "coverage_ratio": operational["coverage_ratio"],
+            },
+        )
 
     @app.get("/health/details")
     def health_details():
@@ -65,6 +94,27 @@ def create_app() -> FastAPI:
             settings=settings,
         )
         return build_prometheus_metrics(telemetry)
+
+    @app.get("/api/v1/telemetry")
+    def get_telemetry():
+        settings = load_system_settings()
+        video_sources = load_video_sources()
+        worker_statuses = load_worker_statuses()
+        events = enrich_event_rows(load_events(limit=500), video_sources, worker_statuses)
+        incidents = load_incidents(limit=500)
+        telemetry = build_worker_runtime_metrics(
+            video_sources=video_sources,
+            worker_statuses=worker_statuses,
+            events=events,
+            settings=settings,
+        )
+        operational = build_operational_summary(
+            video_sources=video_sources,
+            worker_statuses=worker_statuses,
+            incidents=incidents,
+            settings=settings,
+        )
+        return {"telemetry": telemetry, "operational": operational}
 
     @app.get("/api/v1/system/settings")
     def get_system_settings():

@@ -20,6 +20,7 @@ from analytics.access import (
     build_zone_risk_rows,
 )
 from services.source_health import normalize_source_runtime_status
+from services.telemetry import build_operational_summary
 
 
 def _build_dashboard_guidance(*, video_sources: list[dict], worker_statuses: list[dict], incidents: list[dict]) -> list[str]:
@@ -47,10 +48,18 @@ def render_dashboard(
     video_sources: list[dict],
     access_points: list[dict],
     employees: list[dict],
+    settings: dict | None = None,
 ):
+    settings = settings or {}
     summary = build_kpi_summary(events, worker_statuses)
     incident_summary = build_incident_status_summary(incidents)
     health_summary = build_camera_health_summary(video_sources, worker_statuses)
+    operational_summary = build_operational_summary(
+        video_sources=video_sources,
+        worker_statuses=worker_statuses,
+        incidents=incidents,
+        settings=settings,
+    )
     zone_risk_rows = build_zone_risk_rows(incidents)
     source_risk_rows = build_source_risk_rows(video_sources, worker_statuses, incidents)
     incident_queue_rows = build_incident_queue_rows(incidents, limit=12)
@@ -72,6 +81,10 @@ def render_dashboard(
     second2.metric("Камер degraded", health_summary["degraded"])
     second3.metric("Камер offline", health_summary["offline"])
     second4.metric("Ложные срабатывания", incident_summary["false_positive"])
+    third1, third2, third3 = st.columns(3)
+    third1.metric("Coverage active камер, %", operational_summary["coverage_ratio"])
+    third2.metric("Active incidents без owner", operational_summary["active_incidents_unassigned"])
+    third3.metric("Operational status", operational_summary["status"])
 
     for message in guidance_items:
         st.info(message)
@@ -134,6 +147,14 @@ def render_dashboard(
                     hide_index=True,
                 )
                 st.caption("Риск по зонам появится после накопления инцидентов хотя бы по одной зоне.")
+
+        with st.container(border=True):
+            st.subheader("Operational readiness")
+            if operational_summary["issues"]:
+                for issue in operational_summary["issues"]:
+                    st.warning(issue)
+            else:
+                st.success("Система готова к эксплуатационному сценарию: активные камеры online, критичных operational issues не найдено.")
 
     with right_col:
         with st.container(border=True):
