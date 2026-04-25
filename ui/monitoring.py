@@ -212,6 +212,10 @@ def _status_chip_color(status: str) -> str:
 
 
 def _render_fullscreen_frame(frame_placeholder, frame_rgb):
+    _render_fullscreen_frame_with_fit(frame_placeholder, frame_rgb, object_fit="cover")
+
+
+def _render_fullscreen_frame_with_fit(frame_placeholder, frame_rgb, *, object_fit: str = "cover"):
     ok, encoded = cv2.imencode(".jpg", cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR), [int(cv2.IMWRITE_JPEG_QUALITY), 88])
     if not ok:
         frame_placeholder.image(frame_rgb, channels="RGB", width="stretch")
@@ -221,7 +225,7 @@ def _render_fullscreen_frame(frame_placeholder, frame_rgb):
         f"""
         <img
             src="data:image/jpeg;base64,{encoded_image}"
-            style="position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;background:#000;z-index:1;"
+            style="position:fixed;inset:0;width:100vw;height:100vh;object-fit:{object_fit};background:#000;z-index:1;"
         />
         """,
         unsafe_allow_html=True,
@@ -707,6 +711,17 @@ def _build_source_bindings(active_sources: list[dict], statuses_by_id: dict) -> 
                 "label": f"{source_name} [{source_type}]",
             }
         )
+    bindings.append(
+        {
+            "source_id": "local-macbook",
+            "kind": "local_camera",
+            "kind_label": "local_camera",
+            "source": None,
+            "status": {},
+            "name": "Камера MacBook",
+            "label": "Камера MacBook [local_camera]",
+        }
+    )
     bindings.sort(key=_monitoring_binding_priority)
     return bindings
 
@@ -720,6 +735,13 @@ def _resolve_default_selection(source_bindings: list[dict], preferred_source: st
         for binding in source_bindings:
             if binding["kind"] == "browser_camera":
                 return [binding["label"]]
+    if preferred_source == "local_camera":
+        for binding in source_bindings:
+            if binding["kind"] == "local_camera":
+                return [binding["label"]]
+    for binding in source_bindings:
+        if binding["kind"] == "local_camera":
+            return [binding["label"]]
     preferred_binding = _find_browser_operator_binding(source_bindings)
     if preferred_binding is not None:
         return [preferred_binding["label"]]
@@ -754,11 +776,13 @@ def _find_browser_operator_binding(bindings: list[dict]) -> dict | None:
 
 
 def _monitoring_binding_priority(binding: dict) -> tuple[int, str]:
-    if binding.get("name") == "Браузер оператора":
+    if binding.get("kind") == "local_camera":
         return (0, binding.get("label") or "")
-    if binding.get("kind") == "browser_camera":
+    if binding.get("name") == "Браузер оператора":
         return (1, binding.get("label") or "")
-    return (2, binding.get("label") or "")
+    if binding.get("kind") == "browser_camera":
+        return (2, binding.get("label") or "")
+    return (3, binding.get("label") or "")
 
 
 def _resolve_binding_last_frame_at(binding: dict, session_state):
@@ -1043,6 +1067,7 @@ def _render_source_tile(
                 db_insert_frame=db_insert_frame,
                 db_upsert_session=db_upsert_session,
                 standalone_mode=False,
+                simple_mode=True,
                 status_panel_callback=status_panel_callback,
             )
             return
@@ -1236,8 +1261,9 @@ def _render_standalone_live_window(
     db_upsert_session,
     overlay_enabled: bool,
 ):
+    object_fit = "cover" if overlay_enabled else "contain"
     st.markdown(
-        """
+        f"""
         <style>
             [data-testid="stAppViewContainer"],
             [data-testid="stMainBlockContainer"] {
@@ -1247,7 +1273,7 @@ def _render_standalone_live_window(
             video {
                 width: 100vw !important;
                 height: 100vh !important;
-                object-fit: cover !important;
+                object-fit: {object_fit} !important;
                 background: #000 !important;
                 margin: 0 !important;
                 display: block !important;
@@ -1305,6 +1331,8 @@ def _render_standalone_live_window(
             db_insert_frame=db_insert_frame,
             db_upsert_session=db_upsert_session,
             standalone_mode=True,
+            simple_mode=True,
+            fullscreen_object_fit=object_fit,
         )
     else:
         _render_browser_camera_monitor(
@@ -1339,6 +1367,8 @@ def _render_local_camera_monitor(
     db_insert_frame,
     db_upsert_session,
     standalone_mode: bool = False,
+    simple_mode: bool = False,
+    fullscreen_object_fit: str = "cover",
     status_panel_callback=None,
 ):
     """Continuous local-device monitoring for MacBook internal camera and other local webcams."""
@@ -1356,7 +1386,7 @@ def _render_local_camera_monitor(
     backend_key = "auto"
     resolution_label = "720p"
     mirror_preview = True
-    if not standalone_mode:
+    if not standalone_mode and not simple_mode:
         setup_col1, setup_col2, setup_col3, setup_col4 = st.columns(4)
         with setup_col1:
             camera_index = st.number_input(
@@ -1388,7 +1418,7 @@ def _render_local_camera_monitor(
 
     if standalone_mode:
         session_state.local_camera_running = True
-    else:
+    elif not simple_mode:
         control_col1, control_col2 = st.columns(2)
         with control_col1:
             if st.button("Запустить локальную камеру", key="live_local_camera_start"):
@@ -1398,6 +1428,8 @@ def _render_local_camera_monitor(
                 session_state.local_camera_running = False
         with st.expander("Диагностика локальной камеры", expanded=False):
             st.dataframe(pd.DataFrame(_probe_camera_backends(int(camera_index))), width="stretch", hide_index=True)
+    else:
+        session_state.local_camera_running = True
 
     if not session_state.local_camera_running:
         st.info("Запустите локальную камеру для непрерывного мониторинга.")
@@ -1415,7 +1447,7 @@ def _render_local_camera_monitor(
     _apply_camera_preferences(cap, resolution_label=resolution_label)
     session_state.local_camera_backend = backend_meta.get("backend_label")
     session_state.local_camera_resolution = resolution_label
-    if not standalone_mode:
+    if not standalone_mode and not simple_mode:
         st.caption(
             f"Активный backend захвата: {backend_meta.get('backend_label')} • "
             f"Разрешение: {resolution_label}"
@@ -1529,7 +1561,7 @@ def _render_local_camera_monitor(
             status_panel_callback()
         if frame_rgb is not None and time.time() - last_ui_draw_ts >= DEFAULT_UI_REFRESH_INTERVAL_SEC:
             if standalone_mode:
-                _render_fullscreen_frame(frame_display, frame_rgb)
+                _render_fullscreen_frame_with_fit(frame_display, frame_rgb, object_fit=fullscreen_object_fit)
             else:
                 frame_display.image(frame_rgb, channels="RGB", width="stretch")
             last_ui_draw_ts = time.time()
@@ -1537,7 +1569,7 @@ def _render_local_camera_monitor(
 
     cap.release()
     finish_session(session_state, db_upsert_session)
-    if not standalone_mode:
+    if not standalone_mode and not simple_mode:
         session_state.local_camera_running = False
     return session_state.get("local_camera_last_frame_at")
 

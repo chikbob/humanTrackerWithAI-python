@@ -20,7 +20,7 @@ def _bindings():
     return [
         {"source_id": 10, "kind": "production", "name": "Камера 1", "label": "Камера 1 [rtsp]"},
         {"source_id": "browser-live", "kind": "browser_camera", "name": "Браузер оператора", "label": "Браузер оператора [browser_camera]"},
-        {"source_id": "local-macbook", "kind": "local_camera", "name": "Локальная камера MacBook", "label": "Локальная камера MacBook"},
+        {"source_id": "local-macbook", "kind": "local_camera", "name": "Камера MacBook", "label": "Камера MacBook [local_camera]"},
     ]
 
 
@@ -32,8 +32,8 @@ class MonitoringHelperTests(unittest.TestCase):
     def test_resolve_default_selection_prefers_browser_camera(self):
         self.assertEqual(_resolve_default_selection(_bindings(), "browser_camera", ""), ["Браузер оператора [browser_camera]"])
 
-    def test_resolve_default_selection_prefers_browser_operator_without_explicit_hint(self):
-        self.assertEqual(_resolve_default_selection(_bindings(), "", ""), ["Браузер оператора [browser_camera]"])
+    def test_resolve_default_selection_prefers_macbook_camera_without_explicit_hint(self):
+        self.assertEqual(_resolve_default_selection(_bindings(), "", ""), ["Камера MacBook [local_camera]"])
 
     def test_resolve_standalone_binding_by_kind(self):
         binding = _resolve_standalone_binding(_bindings(), preferred_source="", preferred_source_id="", preferred_source_kind="local_camera")
@@ -48,9 +48,11 @@ class MonitoringHelperTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(bindings[0]["name"], "Браузер оператора")
-        self.assertEqual(bindings[0]["kind"], "browser_camera")
-        self.assertEqual(bindings[1]["kind"], "production")
+        self.assertEqual(bindings[0]["name"], "Камера MacBook")
+        self.assertEqual(bindings[0]["kind"], "local_camera")
+        self.assertEqual(bindings[1]["name"], "Браузер оператора")
+        self.assertEqual(bindings[1]["kind"], "browser_camera")
+        self.assertEqual(bindings[2]["kind"], "production")
 
     def test_live_window_url_contains_stable_source_parameters(self):
         url = _build_live_window_url({"kind": "production", "source_id": 7})
