@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from analytics.access import build_kpi_summary, enrich_event_rows
+from analytics.access import build_incident_queue_rows, build_kpi_summary, build_operator_workload_rows, enrich_event_rows
 from db.repository import (
     load_access_points,
     load_audit_logs,
@@ -42,6 +42,11 @@ def build_incident_summary(incidents: list[dict]) -> dict:
         "false_positive": sum(1 for incident in incidents if incident.get("status") == "false_positive"),
         "resolved": sum(1 for incident in incidents if incident.get("status") == "resolved"),
         "assigned": sum(1 for incident in incidents if (incident.get("assigned_to") or "").strip()),
+        "unassigned_active": sum(
+            1
+            for incident in incidents
+            if incident.get("status") in active_statuses and not (incident.get("assigned_to") or "").strip()
+        ),
         "mean_ack_minutes": round(sum(ack_durations) / len(ack_durations), 2) if ack_durations else 0.0,
         "mean_resolution_minutes": round(sum(resolution_durations) / len(resolution_durations), 2) if resolution_durations else 0.0,
         "overdue_active": overdue_active,
@@ -61,6 +66,8 @@ def load_dashboard_summary(*, event_limit: int = 200) -> dict:
         "settings": settings,
         "summary": build_kpi_summary(events, worker_statuses),
         "incidents_summary": build_incident_summary(incidents),
+        "incident_queue": build_incident_queue_rows(incidents, limit=12),
+        "operator_workload": build_operator_workload_rows(incidents, limit=8),
         "telemetry": build_worker_runtime_metrics(
             video_sources=video_sources,
             worker_statuses=worker_statuses,

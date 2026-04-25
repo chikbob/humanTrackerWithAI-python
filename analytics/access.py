@@ -18,7 +18,7 @@ SUSPICIOUS_EVENT_TYPES = {
     "stream_offline",
 }
 
-ACTIVE_INCIDENT_STATUSES = {"new", "acknowledged", "escalated"}
+ACTIVE_INCIDENT_STATUSES = {"new", "acknowledged", "in_progress", "on_hold", "escalated"}
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
 
@@ -165,6 +165,7 @@ def build_incident_status_summary(incidents: list[dict]) -> dict:
         "false_positive": len(false_positive_incidents),
         "zones_under_alert": len({incident.get("zone_name") or "не задана" for incident in active_incidents}),
         "mean_response_minutes": round(sum(reaction_seconds) / len(reaction_seconds) / 60, 1) if reaction_seconds else 0.0,
+        "unassigned_active": sum(1 for incident in active_incidents if not (incident.get("assigned_to") or "").strip()),
     }
 
 
@@ -178,15 +179,19 @@ def build_incident_severity_distribution(incidents: list[dict]) -> pd.DataFrame:
 
 
 def build_incident_queue_rows(incidents: list[dict], limit: int = 10) -> list[dict]:
+    now_ts = datetime.now().timestamp()
     active_incidents = sorted(
         [incident for incident in incidents if incident.get("status") in ACTIVE_INCIDENT_STATUSES],
         key=lambda incident: (
             SEVERITY_ORDER.get(incident.get("severity"), 99),
+            0 if not (incident.get("assigned_to") or "").strip() else 1,
             -(float(incident.get("started_at") or 0.0)),
         ),
     )
     rows = []
     for incident in active_incidents[:limit]:
+        started_at = float(incident.get("started_at") or 0.0)
+        age_minutes = round(max(0.0, now_ts - started_at) / 60.0, 1) if started_at else 0.0
         rows.append(
             {
                 "ID": incident.get("id"),
@@ -195,9 +200,52 @@ def build_incident_queue_rows(incidents: list[dict], limit: int = 10) -> list[di
                 "Источник": incident.get("source_name") or incident.get("source_id") or "—",
                 "Зона": incident.get("zone_name") or "не задана",
                 "Статус": incident.get("status") or "—",
+                "Owner": (incident.get("assigned_to") or "").strip() or "не назначен",
+                "Возраст, мин": age_minutes,
+                "SLA": "overdue" if age_minutes > 15 else "ok",
                 "Время": _fmt_ts_short(incident.get("started_at")),
             }
         )
+    return rows
+
+
+def build_operator_workload_rows(incidents: list[dict], *, limit: int = 6) -> list[dict]:
+    now_ts = datetime.now().timestamp()
+    buckets = {}
+    for incident in incidents:
+        if incident.get("status") not in ACTIVE_INCIDENT_STATUSES:
+            continue
+        owner = (incident.get("assigned_to") or "").strip() or "не назначен"
+        bucket = buckets.setdefault(
+            owner,
+            {
+                "Ответственный": owner,
+                "Активных кейсов": 0,
+                "Critical": 0,
+                "Overdue": 0,
+                "Последний кейс": 0.0,
+            },
+        )
+        bucket["Активных кейсов"] += 1
+        if incident.get("severity") == "critical":
+            bucket["Critical"] += 1
+        started_at = float(incident.get("started_at") or 0.0)
+        if started_at:
+            if (now_ts - started_at) > 15 * 60:
+                bucket["Overdue"] += 1
+            bucket["Последний кейс"] = max(bucket["Последний кейс"], started_at)
+    rows = sorted(
+        buckets.values(),
+        key=lambda row: (
+            0 if row["Ответственный"] == "не назначен" else 1,
+            -row["Overdue"],
+            -row["Critical"],
+            -row["Активных кейсов"],
+            -row["Последний кейс"],
+        ),
+    )[:limit]
+    for row in rows:
+        row["Последний кейс"] = _fmt_ts_short(row["Последний кейс"])
     return rows
 
 

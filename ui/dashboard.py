@@ -15,6 +15,7 @@ from analytics.access import (
     build_incident_status_summary,
     build_kpi_summary,
     build_offline_source_summary,
+    build_operator_workload_rows,
     build_source_risk_rows,
     build_top_event_types,
     build_zone_risk_rows,
@@ -63,6 +64,7 @@ def render_dashboard(
     zone_risk_rows = build_zone_risk_rows(incidents)
     source_risk_rows = build_source_risk_rows(video_sources, worker_statuses, incidents)
     incident_queue_rows = build_incident_queue_rows(incidents, limit=12)
+    operator_workload_rows = build_operator_workload_rows(incidents, limit=8)
     severity_distribution = build_incident_severity_distribution(incidents)
     active_point = access_points[0]["name"] if access_points else "не задана"
     operator_count = sum(1 for employee in employees if employee.get("status") == "active")
@@ -80,7 +82,7 @@ def render_dashboard(
     second1.metric("Камер healthy", health_summary["healthy"])
     second2.metric("Камер degraded", health_summary["degraded"])
     second3.metric("Камер offline", health_summary["offline"])
-    second4.metric("Ложные срабатывания", incident_summary["false_positive"])
+    second4.metric("Active без owner", incident_summary["unassigned_active"])
     third1, third2, third3 = st.columns(3)
     third1.metric("Coverage active камер, %", operational_summary["coverage_ratio"])
     third2.metric("Active incidents без owner", operational_summary["active_incidents_unassigned"])
@@ -163,11 +165,22 @@ def render_dashboard(
                 st.dataframe(pd.DataFrame(incident_queue_rows), width="stretch", hide_index=True)
             else:
                 st.dataframe(
-                    pd.DataFrame(columns=["ID", "Серьезность", "Инцидент", "Источник", "Зона", "Статус", "Время"]),
+                    pd.DataFrame(columns=["ID", "Серьезность", "Инцидент", "Источник", "Зона", "Статус", "Owner", "Возраст, мин", "SLA", "Время"]),
                     width="stretch",
                     hide_index=True,
                 )
                 st.caption("Активных инцидентов сейчас нет. Очередь автоматически заполнится новыми или эскалированными кейсами.")
+        with st.container(border=True):
+            st.subheader("Нагрузка по ответственным")
+            if operator_workload_rows:
+                st.dataframe(pd.DataFrame(operator_workload_rows), width="stretch", hide_index=True)
+            else:
+                st.dataframe(
+                    pd.DataFrame(columns=["Ответственный", "Активных кейсов", "Critical", "Overdue", "Последний кейс"]),
+                    width="stretch",
+                    hide_index=True,
+                )
+                st.caption("Блок появится, когда активные кейсы будут назначены операторам.")
         with st.container(border=True):
             st.subheader("Распределение по серьезности")
             if severity_distribution.empty:

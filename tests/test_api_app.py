@@ -112,9 +112,12 @@ class ApiAppTests(unittest.TestCase):
         payload = response.json()
         self.assertIn("summary", payload)
         self.assertIn("incidents_summary", payload)
+        self.assertIn("incident_queue", payload)
+        self.assertIn("operator_workload", payload)
         self.assertEqual(len(payload["recent_events"]), 1)
         self.assertEqual(payload["recent_events"][0]["event_id"], "evt-api-1")
         self.assertEqual(len(payload["recent_incidents"]), 1)
+        self.assertEqual(payload["incident_queue"][0]["Owner"], "не назначен")
 
     def test_video_source_activation_endpoint(self):
         source_id = repository.load_video_sources()[0]["id"]
@@ -129,6 +132,7 @@ class ApiAppTests(unittest.TestCase):
         self.assertEqual(len(payload["items"]), 1)
         incident_id = payload["items"][0]["id"]
         self.assertIn("summary", payload)
+        self.assertEqual(payload["summary"]["unassigned_active"], 1)
 
         update_response = self.client.put(
             f"/api/v1/incidents/{incident_id}/status",
