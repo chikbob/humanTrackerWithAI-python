@@ -15,7 +15,7 @@ SOURCE_TYPES = {
     "rtsp": "RTSP/IP-камера",
     "stream_url": "HLS / HTTP-поток",
     "usb_camera": "USB / локальная камера на сервере",
-    "browser_camera": "Браузерная камера",
+    "browser_camera": "Камера устройства через браузер",
 }
 PRODUCTION_SOURCE_TYPES = ("rtsp", "stream_url", "usb_camera")
 LAB_SOURCE_TYPES = ("browser_camera",)
@@ -227,7 +227,7 @@ def render_video_sources(
         st.subheader("Реестр подключенных источников")
         st.caption(
             "Production-контур должен опираться на RTSP/HLS/USB-камеры. "
-            "Browser-источники и мобильные сценарии относятся к лабораторному контуру диагностики."
+            "Browser/WebRTC-источники подходят для камер ноутбуков и телефонов операторов и работают в рамках пользовательской сессии."
         )
         rows = []
         for source in video_sources:
@@ -251,7 +251,7 @@ def render_video_sources(
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
     tab_add, tab_manage, tab_check, tab_lab = st.tabs(
-        ["Production-камеры", "Управление и активация", "Проверка подключения", "Лаборатория и мобильные камеры"]
+        ["Production-камеры", "Управление и активация", "Проверка подключения", "Камеры ноутбуков и телефонов"]
     )
 
     with tab_add:
@@ -343,7 +343,7 @@ def render_video_sources(
                     for source in production_sources
                     if source["id"] == source_id
                 ),
-                help="В production-мониторинг попадают только эти камеры. Лабораторные browser-источники активируются отдельно.",
+                help="В общий мониторинг попадают активные серверные камеры. Browser/WebRTC-источники активируются в пользовательской сессии оператора.",
             )
             if st.button("Сохранить набор активных источников", type="primary"):
                 if not can_manage:
@@ -357,8 +357,8 @@ def render_video_sources(
 
             if lab_sources:
                 st.caption(
-                    f"Лабораторные источники: {', '.join(source['name'] for source in lab_sources)}. "
-                    "Они не попадают в основную video wall и используются только для диагностики."
+                    f"Browser/WebRTC-источники: {', '.join(source['name'] for source in lab_sources)}. "
+                    "Они доступны в операторском мониторинге как live-камеры клиентских устройств."
                 )
 
             selected_label = st.selectbox("Источник для редактирования", options=list(source_labels.keys()), key="source_edit_select")
@@ -413,10 +413,10 @@ def render_video_sources(
 
     with tab_lab:
         with st.container(border=True):
-            st.subheader("Лабораторный контур")
+            st.subheader("Камеры устройств операторов")
             st.caption(
-                "Здесь настраиваются browser-live и мобильные камеры для демонстрации, быстрой диагностики и полевых проверок. "
-                "Основной операторский контур на них не опирается."
+                "Здесь настраиваются камеры ноутбуков, iPhone и других клиентских устройств. "
+                "На продакшене они работают через браузер по HTTPS/WebRTC внутри активной операторской сессии."
             )
             lab_rows = [
                 {
@@ -430,7 +430,7 @@ def render_video_sources(
             if lab_rows:
                 st.dataframe(pd.DataFrame(lab_rows), width="stretch", hide_index=True)
             else:
-                st.info("Лабораторные источники ещё не добавлены.")
+                st.info("Browser/WebRTC-источники ещё не добавлены.")
 
         st.info(
             "Для iPhone не используйте `localhost`. Открывайте UI по IP-адресу компьютера или сервера в той же сети, например `http://<ip-компьютера>:8501`, либо через внешний HTTPS/VPN."
@@ -452,46 +452,46 @@ def render_video_sources(
         browser_col, iphone_cols = st.columns([0.9, 1.1], gap="large")
         with browser_col:
             with st.form("create_browser_lab_source", clear_on_submit=True):
-                st.caption("Добавить browser-live источник для диагностики")
-                browser_name = st.text_input("Наименование", value="Browser Live Camera")
+                st.caption("Добавить источник для камеры текущего устройства")
+                browser_name = st.text_input("Наименование", value="Камера устройства оператора")
                 browser_location = st.text_input("Локация", value="lab")
                 browser_active = st.checkbox("Включить источник", value=False)
-                browser_submit = st.form_submit_button("Добавить browser-live источник")
+                browser_submit = st.form_submit_button("Добавить источник камеры устройства")
             if browser_submit:
                 if not can_manage:
-                    st.error("Недостаточно прав для добавления лабораторного источника.")
+                    st.error("Недостаточно прав для добавления browser/WebRTC-источника.")
                 elif not browser_name.strip():
-                    st.error("Укажите наименование browser-live источника.")
+                    st.error("Укажите наименование источника камеры устройства.")
                 else:
                     create_video_source_fn(
                         name=browser_name.strip(),
                         source_type="browser_camera",
                         source_url="browser_camera",
                         location=browser_location.strip(),
-                        description="Лабораторный browser-live источник",
+                        description="Источник камеры устройства оператора через браузер",
                         is_active=browser_active,
                         **_render_source_processing_defaults(),
                     )
-                    st.success("Browser-live источник добавлен в лабораторный контур.")
+                    st.success("Источник камеры устройства добавлен.")
                     st.rerun()
         with iphone_cols:
             quick_col1, quick_col2 = st.columns(2, gap="large")
         with quick_col1:
-            st.caption("Быстрый preset для браузерной камеры iPhone")
-            if st.button("Добавить источник «iPhone Safari Camera»"):
+            st.caption("Быстрый preset для iPhone / iPad / MacBook камеры через браузер")
+            if st.button("Добавить источник «Камера устройства через Safari/Chrome»"):
                 if not can_manage:
                     st.error("Недостаточно прав для добавления мобильной камеры.")
                 else:
                     create_video_source_fn(
-                        name="iPhone Safari Camera",
+                        name="Камера устройства через Safari/Chrome",
                         source_type="browser_camera",
                         source_url="browser_camera",
                         location="mobile",
-                        description="Мобильная браузерная камера iPhone",
+                        description="Клиентская браузерная камера устройства оператора",
                         is_active=True,
                         **_render_source_processing_defaults(),
                     )
-                    st.success("Источник для Safari-камеры iPhone добавлен.")
+                    st.success("Источник браузерной камеры устройства добавлен.")
                 st.rerun()
         with quick_col2:
             with st.form("iphone_network_camera_form"):

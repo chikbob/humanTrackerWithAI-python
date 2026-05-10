@@ -32,9 +32,12 @@ def ensure_runtime_state(session: dict):
         session["track_entry_timestamps"] = {}
 
 
-def init_session_state(session_state, load_history_from_db):
+def init_session_state(session_state, load_history_from_db=None, *, load_history: bool = False):
     if "history_loaded" not in session_state:
-        loaded_sessions, loaded_events = load_history_from_db()
+        if load_history and callable(load_history_from_db):
+            loaded_sessions, loaded_events = load_history_from_db()
+        else:
+            loaded_sessions, loaded_events = [], []
         session_state.sessions = loaded_sessions
         session_state.events = loaded_events
         session_state.history_loaded = True

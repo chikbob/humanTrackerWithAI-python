@@ -211,6 +211,15 @@ def _status_chip_color(status: str) -> str:
     return palette.get(status, "rgba(148,163,184,.18)")
 
 
+def _binding_stream_key(binding: dict) -> str:
+    if binding.get("kind") == "browser_camera":
+        label = binding.get("label") or binding.get("name") or binding.get("source_id") or "browser_camera"
+        return f"browser_camera_{_safe_stream_key(str(label))}"
+    if binding.get("kind") == "local_camera":
+        return "local_camera"
+    return ""
+
+
 def _render_fullscreen_frame(frame_placeholder, frame_rgb):
     _render_fullscreen_frame_with_fit(frame_placeholder, frame_rgb, object_fit="cover")
 
@@ -561,13 +570,8 @@ def render_online_monitoring(
             st.markdown("### Панель состояния")
             if selected_binding["kind"] == "production":
                 status_fps = round(selected_status.get("fps") or 0.0, 2)
-            elif selected_binding["kind"] == "local_camera":
-                status_fps = round(session_state.get("local_camera_fps") or 0.0, 2)
-            elif selected_binding["kind"] == "browser_camera":
-                browser_fps = session_state.get("browser_camera_fps")
-                status_fps = round(browser_fps or 0.0, 2) if browser_fps else "—"
             else:
-                status_fps = "—"
+                status_fps = _resolve_binding_fps(selected_binding, session_state, source_card=source_cards.get(selected_binding.get("source_id"), {}))
             st.markdown(
                 f"""
                 <div class="ops-panel">
@@ -739,12 +743,12 @@ def _resolve_default_selection(source_bindings: list[dict], preferred_source: st
         for binding in source_bindings:
             if binding["kind"] == "local_camera":
                 return [binding["label"]]
-    for binding in source_bindings:
-        if binding["kind"] == "local_camera":
-            return [binding["label"]]
     preferred_binding = _find_browser_operator_binding(source_bindings)
     if preferred_binding is not None:
         return [preferred_binding["label"]]
+    for binding in source_bindings:
+        if binding["kind"] != "local_camera":
+            return [binding["label"]]
     return [source_bindings[0]["label"]]
 
 
@@ -776,39 +780,36 @@ def _find_browser_operator_binding(bindings: list[dict]) -> dict | None:
 
 
 def _monitoring_binding_priority(binding: dict) -> tuple[int, str]:
-    if binding.get("kind") == "local_camera":
-        return (0, binding.get("label") or "")
     if binding.get("name") == "Браузер оператора":
-        return (1, binding.get("label") or "")
+        return (0, binding.get("label") or "")
     if binding.get("kind") == "browser_camera":
-        return (2, binding.get("label") or "")
-    return (3, binding.get("label") or "")
+        return (1, binding.get("label") or "")
+    if binding.get("kind") == "local_camera":
+        return (3, binding.get("label") or "")
+    return (2, binding.get("label") or "")
 
 
 def _resolve_binding_last_frame_at(binding: dict, session_state):
-    if binding["kind"] == "local_camera":
-        return session_state.get("local_camera_last_frame_at")
-    if binding["kind"] == "browser_camera":
-        return session_state.get("browser_camera_last_frame_at")
+    runtime_key = _binding_stream_key(binding)
+    if runtime_key:
+        return session_state.get(f"{runtime_key}_last_frame_at")
     return binding.get("status", {}).get("last_frame_at")
 
 
 def _resolve_binding_status(binding: dict, session_state, *, source_card: dict | None = None) -> str:
     source_card = source_card or {}
-    if binding["kind"] == "local_camera":
-        return "live" if session_state.get("local_camera_last_frame_at") else "ready"
-    if binding["kind"] == "browser_camera":
-        return "live" if session_state.get("browser_camera_last_frame_at") else "ready"
+    runtime_key = _binding_stream_key(binding)
+    if runtime_key:
+        return "live" if session_state.get(f"{runtime_key}_last_frame_at") else "ready"
     return source_card.get("status") or binding.get("status", {}).get("status", "offline")
 
 
 def _resolve_binding_fps(binding: dict, session_state, *, source_card: dict | None = None):
     source_card = source_card or {}
-    if binding["kind"] == "local_camera":
-        return round(session_state.get("local_camera_fps") or 0.0, 2)
-    if binding["kind"] == "browser_camera":
-        browser_fps = session_state.get("browser_camera_fps")
-        return round(browser_fps or 0.0, 2) if browser_fps else "—"
+    runtime_key = _binding_stream_key(binding)
+    if runtime_key:
+        current_fps = session_state.get(f"{runtime_key}_fps")
+        return round(current_fps or 0.0, 2) if current_fps else "—"
     return source_card.get("fps")
 
 
@@ -1378,7 +1379,8 @@ def _render_local_camera_monitor(
             "где физически подключена камера."
         )
         st.info(
-            "Для удаленного хоста используйте Browser live/WebRTC или production-источник RTSP/HLS/USB на стороне сервера."
+            "Для продакшена и удаленного хоста используйте камеру этого устройства через Browser live/WebRTC "
+            "или production-источник RTSP/HLS/USB на стороне сервера."
         )
         return session_state.get("local_camera_last_frame_at")
 
@@ -1871,6 +1873,7 @@ def _render_browser_camera_monitor(
     status_panel_callback=None,
 ):
     """Render browser camera via all realistic methods available in the current environment."""
+    stream_key = f"browser_camera_{_safe_stream_key(source_label)}"
     methods = ["WebRTC live", "Browser snapshot", "Диагностика"]
     if not standalone_mode:
         method = st.radio(
@@ -1886,7 +1889,7 @@ def _render_browser_camera_monitor(
         shot = st.camera_input("Кадр из браузерной камеры", key=f"browser_camera_snapshot_{_safe_stream_key(source_label)}")
         if shot is None:
             st.info("Разреши доступ к камере в браузере и сделай кадр для проверки этого метода.")
-            return session_state.get("browser_camera_last_frame_at")
+            return session_state.get(f"{stream_key}_last_frame_at")
         start_session(
             session_state,
             db_upsert_session,
@@ -1956,11 +1959,11 @@ def _render_browser_camera_monitor(
             ),
             draw_now=True,
         )
-        _record_interactive_frame(session_state, "browser_camera")
+        _record_interactive_frame(session_state, stream_key)
         if status_panel_callback is not None:
             status_panel_callback()
         finish_session(session_state, db_upsert_session)
-        return session_state.get("browser_camera_last_frame_at")
+        return session_state.get(f"{stream_key}_last_frame_at")
 
     if method == "Диагностика":
         alt_runtime = _detect_alt_webrtc_runtime()
@@ -1989,7 +1992,7 @@ def _render_browser_camera_monitor(
             "Для browser live нужны рабочие `streamlit-webrtc` + `av`, HTTPS на удаленном хосте и ICE servers "
             "с TURN для проблемных сетей/NAT."
         )
-        return session_state.get("browser_camera_last_frame_at")
+        return session_state.get(f"{stream_key}_last_frame_at")
 
     if not WEBRTC_AVAILABLE:
         alt_runtime = _detect_alt_webrtc_runtime()
@@ -2007,10 +2010,10 @@ def _render_browser_camera_monitor(
         if shot is not None:
             image = Image.open(shot).convert("RGB")
             st.image(image, caption="Получен кадр из браузерной камеры", width="stretch")
-            _record_interactive_frame(session_state, "browser_camera")
+            _record_interactive_frame(session_state, stream_key)
             if status_panel_callback is not None:
                 status_panel_callback()
-        return session_state.get("browser_camera_last_frame_at")
+        return session_state.get(f"{stream_key}_last_frame_at")
 
     if not standalone_mode:
         rtc_diag = describe_rtc_environment()
@@ -2041,7 +2044,7 @@ def _render_browser_camera_monitor(
             roi_config={"enable_roi": True, "roi_x": 20, "roi_y": 20, "roi_w": 60, "roi_h": 60},
             draw_box_fn=draw_fancy_box,
         )
-        _record_interactive_frame(session_state, "browser_camera")
+        _record_interactive_frame(session_state, stream_key)
         return av.VideoFrame.from_ndarray(cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR), format="bgr24")
 
     webrtc_streamer(
@@ -2057,7 +2060,7 @@ def _render_browser_camera_monitor(
             "Если видите долгую установку соединения, это не snapshot-проблема, а WebRTC/TURN-сценарий. "
             "Для удаленного запуска используйте подготовленный coturn-контур."
         )
-    return session_state.get("browser_camera_last_frame_at")
+    return session_state.get(f"{stream_key}_last_frame_at")
 
 
 def _process_single_frame(
