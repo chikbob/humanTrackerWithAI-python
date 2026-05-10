@@ -16,11 +16,13 @@ from db.repository import (
     create_video_source,
     init_db,
     link_event_to_employee,
+    load_attendance_today,
     load_access_points,
     load_audit_logs,
     load_employees,
     load_events,
     load_incidents,
+    register_employee_attendance,
     load_system_settings,
     load_video_sources,
     load_worker_statuses,
@@ -31,6 +33,7 @@ from db.repository import (
 )
 from services.system_api import build_incident_summary, load_dashboard_summary
 from services.telemetry import build_health_payload, build_operational_summary, build_prometheus_metrics, build_worker_runtime_metrics
+from services.vision_runtime import analyze_frame, list_available_models, save_snapshot
 
 
 class ActorPayload(BaseModel):
@@ -83,6 +86,24 @@ class SystemSettingPayload(ActorPayload):
 
 class SystemSettingsBulkPayload(ActorPayload):
     items: dict[str, str]
+
+
+class FrameAnalysisPayload(BaseModel):
+    image_base64: str = Field(min_length=10)
+    model_name: str = ""
+    confidence_threshold: float | None = Field(default=None, ge=0.01, le=0.99)
+    inference_size: int | None = Field(default=None, ge=320, le=1280)
+
+
+class AttendanceCheckpointPayload(ActorPayload):
+    employee_id: int = Field(ge=1)
+    access_point_id: int | None = Field(default=None, ge=1)
+    image_base64: str = Field(min_length=10)
+    model_name: str = ""
+    source_type: str = "browser_camera"
+    confidence_threshold: float | None = Field(default=None, ge=0.01, le=0.99)
+    inference_size: int | None = Field(default=None, ge=320, le=1280)
+    note: str = ""
 
 
 FRONTEND_DIST_DIR = Path(__file__).resolve().parents[1] / "frontend" / "dist"
@@ -211,6 +232,87 @@ def create_app() -> FastAPI:
             details={"keys": sorted(updated.keys())},
         )
         return {"items": updated}
+
+    @app.get("/api/v1/models")
+    def get_models():
+        return {"items": list_available_models()}
+
+    @app.post("/api/v1/analyze-frame")
+    def post_analyze_frame(payload: FrameAnalysisPayload):
+        analysis = analyze_frame(
+            image_base64=payload.image_base64,
+            model_name=payload.model_name or None,
+            confidence_threshold=payload.confidence_threshold,
+            inference_size=payload.inference_size,
+            track_people_only=True,
+        )
+        return {
+            "model_name": analysis["model_name"],
+            "processing_time_ms": analysis["processing_time_ms"],
+            "person_count": analysis["person_count"],
+            "detections": analysis["detections"],
+            "image_width": analysis["image_width"],
+            "image_height": analysis["image_height"],
+            "annotated_image_base64": analysis["annotated_image_base64"],
+        }
+
+    @app.get("/api/v1/attendance/today")
+    def get_attendance_today():
+        return load_attendance_today()
+
+    @app.post("/api/v1/attendance/checkpoint")
+    def post_attendance_checkpoint(payload: AttendanceCheckpointPayload):
+        analysis = analyze_frame(
+            image_base64=payload.image_base64,
+            model_name=payload.model_name or None,
+            confidence_threshold=payload.confidence_threshold,
+            inference_size=payload.inference_size,
+            track_people_only=True,
+        )
+        if analysis["person_count"] == 0:
+            raise HTTPException(status_code=400, detail="person_not_detected")
+        if analysis["person_count"] > 1:
+            raise HTTPException(status_code=400, detail="multiple_people_detected")
+        snapshot_path = save_snapshot(analysis["frame_bgr"], prefix="attendance")
+        best_confidence = max((item["confidence"] for item in analysis["detections"]), default=None)
+        try:
+            result = register_employee_attendance(
+                employee_id=payload.employee_id,
+                access_point_id=payload.access_point_id,
+                model_name=analysis["model_name"],
+                source_type=payload.source_type,
+                detection_confidence=best_confidence,
+                snapshot_path=snapshot_path,
+                note=payload.note,
+            )
+        except ValueError as exc:
+            detail = str(exc)
+            if detail.startswith(("employee_not_found", "access_point_not_found")):
+                raise HTTPException(status_code=404, detail=detail) from exc
+            raise HTTPException(status_code=400, detail=detail) from exc
+        append_audit_log(
+            actor_name=payload.actor_name,
+            actor_role=payload.actor_role,
+            action=f"attendance.{result['attendance_status']}",
+            resource_type="employee",
+            resource_id=str(payload.employee_id),
+            details={
+                "access_point_id": payload.access_point_id,
+                "model_name": analysis["model_name"],
+                "person_count": analysis["person_count"],
+                "event_type": result["event_type"],
+            },
+        )
+        return {
+            **result,
+            "analysis": {
+                "model_name": analysis["model_name"],
+                "processing_time_ms": analysis["processing_time_ms"],
+                "person_count": analysis["person_count"],
+                "detections": analysis["detections"],
+                "annotated_image_base64": analysis["annotated_image_base64"],
+            },
+        }
 
     @app.get("/api/v1/video-sources")
     def get_video_sources():

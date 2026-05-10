@@ -1,0 +1,316 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiClient, AttendanceCheckpointResponse, Employee } from "../lib/api";
+
+type DeviceOption = {
+  deviceId: string;
+  label: string;
+};
+
+function captureFrame(video: HTMLVideoElement | null): string | null {
+  if (!video || !video.videoWidth || !video.videoHeight) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.84);
+}
+
+function formatTimestamp(value?: number | null) {
+  if (!value) return "—";
+  return new Date(value * 1000).toLocaleString("ru-RU");
+}
+
+function buildEmployeeLabel(employee: Employee) {
+  const parts = [
+    employee.display_name || employee.full_name,
+    employee.employee_number ? `таб. ${employee.employee_number}` : "",
+    employee.department || ""
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+export function AttendancePage() {
+  const queryClient = useQueryClient();
+  const { data: employeesData } = useQuery({ queryKey: ["employees"], queryFn: apiClient.employees, refetchInterval: 20_000 });
+  const { data: accessPointsData } = useQuery({ queryKey: ["access-points"], queryFn: apiClient.accessPoints });
+  const { data: modelsData } = useQuery({ queryKey: ["models"], queryFn: apiClient.models });
+  const { data: attendanceData, isLoading, error } = useQuery({
+    queryKey: ["attendance-today"],
+    queryFn: apiClient.attendanceToday,
+    refetchInterval: 10_000
+  });
+  const [devices, setDevices] = useState<DeviceOption[]>([]);
+  const [activeDeviceId, setActiveDeviceId] = useState("");
+  const [cameraEnabled, setCameraEnabled] = useState(false);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<number>(0);
+  const [selectedAccessPointId, setSelectedAccessPointId] = useState<number>(0);
+  const [selectedModelName, setSelectedModelName] = useState("yolov8s.pt");
+  const [search, setSearch] = useState("");
+  const [lastResult, setLastResult] = useState<AttendanceCheckpointResponse | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const availableEmployees = useMemo(() => employeesData?.items || [], [employeesData]);
+  const filteredEmployees = useMemo(() => {
+    const normalized = search.trim().toLowerCase();
+    if (!normalized) return availableEmployees;
+    return availableEmployees.filter((employee) => {
+      const haystack = [employee.display_name, employee.full_name, employee.employee_number, employee.department].join(" ").toLowerCase();
+      return haystack.includes(normalized);
+    });
+  }, [availableEmployees, search]);
+
+  useEffect(() => {
+    if (!selectedEmployeeId && availableEmployees[0]) {
+      setSelectedEmployeeId(availableEmployees[0].id);
+    }
+  }, [availableEmployees, selectedEmployeeId]);
+
+  useEffect(() => {
+    if (!selectedAccessPointId && accessPointsData?.items[0]) {
+      setSelectedAccessPointId(accessPointsData.items[0].id);
+    }
+  }, [accessPointsData, selectedAccessPointId]);
+
+  useEffect(() => {
+    if (!selectedModelName && modelsData?.items[0]) {
+      setSelectedModelName(modelsData.items[0].name);
+    }
+  }, [modelsData, selectedModelName]);
+
+  useEffect(() => {
+    async function readDevices() {
+      if (!navigator.mediaDevices?.enumerateDevices) return;
+      const items = await navigator.mediaDevices.enumerateDevices();
+      const cameras = items
+        .filter((item) => item.kind === "videoinput")
+        .map((item, index) => ({ deviceId: item.deviceId, label: item.label || `Камера ${index + 1}` }));
+      setDevices(cameras);
+      if (!activeDeviceId && cameras[0]) {
+        setActiveDeviceId(cameras[0].deviceId);
+      }
+    }
+    void readDevices();
+  }, [activeDeviceId]);
+
+  useEffect(() => {
+    async function startCamera() {
+      if (!cameraEnabled || !activeDeviceId || !navigator.mediaDevices?.getUserMedia) return;
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { ideal: activeDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+    }
+
+    void startCamera();
+    return () => {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    };
+  }, [activeDeviceId, cameraEnabled]);
+
+  const checkpointMutation = useMutation({
+    mutationFn: async () => {
+      const imageBase64 = captureFrame(videoRef.current);
+      if (!imageBase64) {
+        throw new Error("Не удалось получить кадр с камеры.");
+      }
+      return apiClient.attendanceCheckpoint({
+        employee_id: selectedEmployeeId,
+        access_point_id: selectedAccessPointId || null,
+        image_base64: imageBase64,
+        model_name: selectedModelName,
+        actor_name: "employee-kiosk",
+        actor_role: "operator"
+      });
+    },
+    onSuccess: (payload) => {
+      setLastResult(payload);
+      queryClient.invalidateQueries({ queryKey: ["attendance-today"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["employees"] });
+    }
+  });
+
+  if (isLoading) return <div className="page-state">Загружаю контур КПП…</div>;
+  if (error || !attendanceData) return <div className="page-state error">Не удалось загрузить данные проходной.</div>;
+
+  return (
+    <section className="page-grid">
+      <div className="page-heading">
+        <span className="eyebrow">NeuroGate Access</span>
+        <h2>КПП сотрудников</h2>
+        <p>Сотрудник проходит к камере, система проверяет наличие человека в кадре выбранной моделью и фиксирует вход или выход в журнале предприятия.</p>
+      </div>
+
+      <div className="metrics-grid">
+        <article className="metric-card">
+          <div className="metric-value">{attendanceData.summary.check_ins}</div>
+          <div className="metric-label">Приходов сегодня</div>
+        </article>
+        <article className="metric-card">
+          <div className="metric-value">{attendanceData.summary.check_outs}</div>
+          <div className="metric-label">Уходов сегодня</div>
+        </article>
+        <article className="metric-card">
+          <div className="metric-value">{attendanceData.summary.currently_on_site}</div>
+          <div className="metric-label">Сейчас на предприятии</div>
+        </article>
+        <article className="metric-card">
+          <div className="metric-value">{attendanceData.summary.average_duration_minutes}</div>
+          <div className="metric-label">Среднее время на смене, мин</div>
+        </article>
+      </div>
+
+      <div className="content-grid two-columns">
+        <section className="panel media-panel">
+          <div className="panel-header">
+            <div>
+              <h3>Окно входа сотрудника</h3>
+              <p className="panel-subtitle">Камера устройства используется как терминал самоотметки.</p>
+            </div>
+          </div>
+
+          <div className="form-grid">
+            <label className="field-block">
+              <span>Поиск сотрудника</span>
+              <input className="input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ФИО, табельный номер, отдел" />
+            </label>
+            <label className="field-block">
+              <span>Сотрудник</span>
+              <select className="input like-select" value={selectedEmployeeId} onChange={(event) => setSelectedEmployeeId(Number(event.target.value))}>
+                {filteredEmployees.map((employee) => (
+                  <option key={employee.id} value={employee.id}>{buildEmployeeLabel(employee)}</option>
+                ))}
+              </select>
+            </label>
+            <div className="triple-grid">
+              <label className="field-block">
+                <span>Точка доступа</span>
+                <select className="input like-select" value={selectedAccessPointId} onChange={(event) => setSelectedAccessPointId(Number(event.target.value))}>
+                  {(accessPointsData?.items || []).map((item) => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field-block">
+                <span>Модель YOLO</span>
+                <select className="input like-select" value={selectedModelName} onChange={(event) => setSelectedModelName(event.target.value)}>
+                  {(modelsData?.items || []).filter((item) => item.available).map((item) => (
+                    <option key={item.name} value={item.name}>{item.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field-block">
+                <span>Камера</span>
+                <select className="input like-select" value={activeDeviceId} onChange={(event) => setActiveDeviceId(event.target.value)}>
+                  {devices.map((device) => (
+                    <option key={device.deviceId} value={device.deviceId}>{device.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div className="button-row">
+            <button className="button secondary" onClick={() => setCameraEnabled((value) => !value)}>
+              {cameraEnabled ? "Остановить камеру" : "Включить камеру"}
+            </button>
+            <button className="button" disabled={!cameraEnabled || checkpointMutation.isPending || !selectedEmployeeId} onClick={() => checkpointMutation.mutate()}>
+              {checkpointMutation.isPending ? "Распознаю..." : "Отметить вход / выход"}
+            </button>
+          </div>
+
+          <div className="video-frame">
+            <video ref={videoRef} muted playsInline />
+          </div>
+
+          {checkpointMutation.error instanceof Error && (
+            <div className="inline-warning">{checkpointMutation.error.message}</div>
+          )}
+        </section>
+
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>Последний результат</h3>
+              <p className="panel-subtitle">Подтверждение действия и аннотированный кадр.</p>
+            </div>
+          </div>
+          {lastResult ? (
+            <div className="list-stack">
+              <article className="status-card">
+                <strong>{lastResult.attendance_status === "check_in" ? "Сотрудник отмечен на работе" : "Сотрудник завершил смену"}</strong>
+                <span>{lastResult.employee.full_name}</span>
+              </article>
+              <article className="stat-line">
+                <strong>Точка доступа</strong>
+                <span>{lastResult.access_point_name || "—"}</span>
+              </article>
+              <article className="stat-line">
+                <strong>Модель</strong>
+                <span>{lastResult.analysis.model_name}</span>
+              </article>
+              <article className="stat-line">
+                <strong>Людей в кадре</strong>
+                <span>{lastResult.analysis.person_count}</span>
+              </article>
+              <article className="stat-line">
+                <strong>Время анализа</strong>
+                <span>{lastResult.analysis.processing_time_ms} мс</span>
+              </article>
+              <img className="analysis-preview" src={lastResult.analysis.annotated_image_base64} alt="Annotated checkpoint frame" />
+              <p className="compact-note">{lastResult.message}</p>
+            </div>
+          ) : (
+            <div className="page-state">После первой отметки здесь появится подтверждение прохода и аннотированный кадр.</div>
+          )}
+        </section>
+      </div>
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h3>Статистика и журнал за день</h3>
+            <p className="panel-subtitle">Полная картина прихода и ухода сотрудников по текущей дате.</p>
+          </div>
+          <span>{attendanceData.items.length} записей</span>
+        </div>
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Сотрудник</th>
+                <th>КПП</th>
+                <th>Приход</th>
+                <th>Уход</th>
+                <th>Статус</th>
+                <th>Модель</th>
+              </tr>
+            </thead>
+            <tbody>
+              {attendanceData.items.map((item) => (
+                <tr key={item.id}>
+                  <td>{item.employee_name}</td>
+                  <td>{item.access_point_name || "—"}</td>
+                  <td>{formatTimestamp(item.check_in_at)}</td>
+                  <td>{formatTimestamp(item.check_out_at)}</td>
+                  <td>{item.status === "on_site" ? "На работе" : "Смена завершена"}</td>
+                  <td>{item.model_name || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  );
+}

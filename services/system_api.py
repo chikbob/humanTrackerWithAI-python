@@ -15,6 +15,7 @@ from analytics.access import (
 )
 from db.repository import (
     load_access_points,
+    load_attendance_today,
     load_audit_logs,
     load_employees,
     load_events,
@@ -102,6 +103,7 @@ def load_dashboard_summary(*, event_limit: int = 200) -> dict:
         "worker_statuses": worker_statuses,
         "access_points": access_points,
         "employees": employees,
+        "attendance_today": load_attendance_today(),
         "recent_events": events[: min(event_limit, len(events))],
         "recent_incidents": incidents[: min(event_limit, len(incidents))],
         "recent_audit_logs": load_audit_logs(limit=min(event_limit, 100)),

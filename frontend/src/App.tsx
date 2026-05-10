@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { Activity, Camera, LayoutDashboard, Radio, Settings, ShieldAlert, Users } from "lucide-react";
+import { Activity, Camera, LayoutDashboard, Radio, ScanFace, Settings, ShieldAlert, Users } from "lucide-react";
 import { DashboardPage } from "./pages/DashboardPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
@@ -8,6 +8,7 @@ import { SourcesPage } from "./pages/SourcesPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { DirectoryPage } from "./pages/DirectoryPage";
 import { AuditPage } from "./pages/AuditPage";
+import { AttendancePage } from "./pages/AttendancePage";
 
 type NavItem = {
   to: string;
@@ -18,6 +19,7 @@ type NavItem = {
 const navItems: NavItem[] = [
   { to: "/dashboard", label: "Ситуационный центр", icon: LayoutDashboard },
   { to: "/monitoring", label: "Операторский мониторинг", icon: Radio },
+  { to: "/checkpoint", label: "КПП сотрудников", icon: ScanFace },
   { to: "/incidents", label: "Инциденты", icon: ShieldAlert },
   { to: "/sources", label: "Источники", icon: Camera },
   { to: "/directory", label: "Персонал", icon: Users },
@@ -32,9 +34,9 @@ export function App() {
     <div className="app-shell">
       <aside className="app-sidebar">
         <div className="brand-block">
-          <span className="brand-eyebrow">Flexible Control Stack</span>
-          <h1>Human Tracker</h1>
-          <p>FastAPI backend + React operator SPA instead of a monolithic Streamlit surface.</p>
+          <span className="brand-eyebrow">NeuroGate</span>
+          <h1>Система мониторинга и интеллектуального анализа объектов</h1>
+          <p>Контур видеомониторинга, проходной сотрудников и аналитики в реальном времени на основе нейросетевых моделей YOLOv8.</p>
         </div>
         <nav className="nav-list">
           {navItems.map((item) => {
@@ -52,7 +54,7 @@ export function App() {
           })}
         </nav>
         <div className="sidebar-footnote">
-          <span>Build switch</span>
+          <span>Актуальная сборка</span>
           <strong>{buildStamp}</strong>
         </div>
       </aside>
@@ -60,16 +62,17 @@ export function App() {
       <main className="app-main">
         <header className="app-topbar">
           <div>
-            <span className="topbar-label">Migration branch</span>
-            <strong>`flexible-stack-migration`</strong>
+            <span className="topbar-label">NeuroGate</span>
+            <strong>Контроль проходной, мониторинг камер и событий</strong>
           </div>
-          <div className="topbar-chip">Fast UI path</div>
+          <div className="topbar-chip">YOLOv8 · FastAPI · React</div>
         </header>
 
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/monitoring" element={<MonitoringPage />} />
+          <Route path="/checkpoint" element={<AttendancePage />} />
           <Route path="/incidents" element={<IncidentsPage />} />
           <Route path="/sources" element={<SourcesPage />} />
           <Route path="/directory" element={<DirectoryPage />} />

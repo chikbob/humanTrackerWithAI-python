@@ -16,16 +16,16 @@ export function DashboardPage() {
   const kpi = [
     { label: "Онлайн-камер", value: data.summary.online_cameras, icon: Camera },
     { label: "Событий за день", value: data.summary.total_events_today, icon: Radar },
-    { label: "Проходов за день", value: data.summary.entries_today, icon: DoorOpen },
+    { label: "Приходов за день", value: data.attendance_today.summary.check_ins, icon: DoorOpen },
     { label: "Активных инцидентов", value: data.incidents_summary.active, icon: AlertTriangle }
   ];
 
   return (
     <section className="page-grid">
       <div className="page-heading">
-        <span className="eyebrow">Control Center</span>
+        <span className="eyebrow">NeuroGate Center</span>
         <h2>Ситуационный центр</h2>
-        <p>Новый frontend читает агрегаты напрямую из API и не блокирует весь экран на каждый navigation rerender.</p>
+        <p>Обзор предприятия в реальном времени: потоковые детекции, кадровая проходная, инциденты и доступность камер.</p>
       </div>
 
       <div className="metrics-grid">
@@ -42,6 +42,31 @@ export function DashboardPage() {
       </div>
 
       <div className="content-grid two-columns">
+        <section className="panel">
+          <div className="panel-header">
+            <h3>Посещаемость за день</h3>
+            <span>{data.attendance_today.items.length} сессий</span>
+          </div>
+          <div className="list-stack">
+            <article className="stat-line">
+              <strong>Приходов</strong>
+              <span>{data.attendance_today.summary.check_ins}</span>
+            </article>
+            <article className="stat-line">
+              <strong>Уходов</strong>
+              <span>{data.attendance_today.summary.check_outs}</span>
+            </article>
+            <article className="stat-line">
+              <strong>Сейчас на предприятии</strong>
+              <span>{data.attendance_today.summary.currently_on_site}</span>
+            </article>
+            <article className="stat-line">
+              <strong>Средняя длительность смены</strong>
+              <span>{data.attendance_today.summary.average_duration_minutes} мин</span>
+            </article>
+          </div>
+        </section>
+
         <section className="panel">
           <div className="panel-header">
             <h3>Очередь инцидентов</h3>

@@ -3,6 +3,7 @@ import tempfile
 import time
 import unittest
 import importlib.util
+from unittest.mock import patch
 
 from db import repository
 
@@ -141,7 +142,7 @@ class ApiAppTests(unittest.TestCase):
 
         update_response = self.client.put(
             f"/api/v1/incidents/{incident_id}/status",
-            params={
+            json={
                 "status": "in_progress",
                 "operator_comment": "Checked by operator",
                 "assigned_to": "Shift lead",
@@ -179,6 +180,58 @@ class ApiAppTests(unittest.TestCase):
         self.assertIn("summary", payload)
         self.assertIn("telemetry", payload)
         self.assertIn("operational", payload)
+
+    def test_models_endpoint_returns_local_model_registry(self):
+        response = self.client.get("/api/v1/models")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertGreaterEqual(len(payload["items"]), 3)
+
+    @patch("api.app.save_snapshot", return_value="/tmp/attendance.jpg")
+    @patch(
+        "api.app.analyze_frame",
+        return_value={
+            "model_name": "yolov8n.pt",
+            "processing_time_ms": 41.2,
+            "person_count": 1,
+            "detections": [{"class_name": "person", "confidence": 0.88, "box": [1, 2, 3, 4]}],
+            "annotated_image_base64": "data:image/jpeg;base64,AAAA",
+            "frame_bgr": object(),
+        },
+    )
+    def test_attendance_checkpoint_creates_check_in_and_check_out(self, _analyze_frame, _save_snapshot):
+        employee_id = repository.load_employees()[0]["id"]
+        access_point_id = repository.load_access_points()[0]["id"]
+
+        check_in_response = self.client.post(
+            "/api/v1/attendance/checkpoint",
+            json={
+                "employee_id": employee_id,
+                "access_point_id": access_point_id,
+                "image_base64": "data:image/jpeg;base64,AAAA",
+                "model_name": "yolov8n.pt",
+            },
+        )
+        self.assertEqual(check_in_response.status_code, 200)
+        check_in_payload = check_in_response.json()
+        self.assertEqual(check_in_payload["attendance_status"], "check_in")
+
+        attendance_today = self.client.get("/api/v1/attendance/today")
+        self.assertEqual(attendance_today.status_code, 200)
+        self.assertEqual(attendance_today.json()["summary"]["check_ins"], 1)
+        self.assertEqual(attendance_today.json()["summary"]["currently_on_site"], 1)
+
+        check_out_response = self.client.post(
+            "/api/v1/attendance/checkpoint",
+            json={
+                "employee_id": employee_id,
+                "access_point_id": access_point_id,
+                "image_base64": "data:image/jpeg;base64,AAAA",
+                "model_name": "yolov8n.pt",
+            },
+        )
+        self.assertEqual(check_out_response.status_code, 200)
+        self.assertEqual(check_out_response.json()["attendance_status"], "check_out")
 
     def test_audit_logs_endpoint_returns_items(self):
         repository.append_audit_log(

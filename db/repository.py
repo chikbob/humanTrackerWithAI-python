@@ -4,6 +4,7 @@ import random
 import sqlite3
 import time
 import uuid
+from datetime import datetime, timedelta
 from typing import Optional
 
 from config.app_config import SOURCE_PROCESSING_DEFAULTS, SYSTEM_SETTING_DEFAULTS, normalize_source_processing_config
@@ -21,6 +22,22 @@ def get_db_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def ensure_snapshot_dir() -> str:
+    snapshot_dir = os.path.join(os.path.dirname(DB_PATH), "snapshots")
+    os.makedirs(snapshot_dir, exist_ok=True)
+    return snapshot_dir
+
+
+def _resolve_day_bounds(day: str | None = None) -> tuple[float, float]:
+    if day:
+        target_day = datetime.strptime(day, "%Y-%m-%d")
+    else:
+        target_day = datetime.now()
+    start = datetime(target_day.year, target_day.month, target_day.day)
+    end = start + timedelta(days=1)
+    return start.timestamp(), end.timestamp()
 
 
 def build_employee_full_name(last_name: str, first_name: str, middle_name: str = "") -> str:
@@ -367,6 +384,27 @@ def init_db():
             event_type TEXT,
             confidence REAL,
             note TEXT,
+            FOREIGN KEY (employee_id) REFERENCES employees(id),
+            FOREIGN KEY (access_point_id) REFERENCES access_points(id)
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS attendance_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_id INTEGER NOT NULL,
+            access_point_id INTEGER,
+            check_in_at REAL NOT NULL,
+            check_out_at REAL,
+            status TEXT NOT NULL DEFAULT 'on_site',
+            source_type TEXT,
+            model_name TEXT,
+            detection_confidence REAL,
+            snapshot_path TEXT,
+            note TEXT,
+            created_at REAL,
+            updated_at REAL,
             FOREIGN KEY (employee_id) REFERENCES employees(id),
             FOREIGN KEY (access_point_id) REFERENCES access_points(id)
         )
@@ -790,6 +828,10 @@ def init_db():
             ("reference_image_url", "reference_image_url TEXT"),
             ("reference_count", "reference_count INTEGER DEFAULT 0"),
             ("last_synced_at", "last_synced_at REAL"),
+            ("presence_status", "presence_status TEXT DEFAULT 'off_duty'"),
+            ("last_check_in_at", "last_check_in_at REAL"),
+            ("last_check_out_at", "last_check_out_at REAL"),
+            ("last_presence_change_at", "last_presence_change_at REAL"),
         ],
     )
     _ensure_columns(
@@ -811,6 +853,24 @@ def init_db():
             ("event_type", "event_type TEXT"),
             ("confidence", "confidence REAL"),
             ("note", "note TEXT"),
+        ],
+    )
+    _ensure_columns(
+        conn,
+        "attendance_sessions",
+        [
+            ("employee_id", "employee_id INTEGER"),
+            ("access_point_id", "access_point_id INTEGER"),
+            ("check_in_at", "check_in_at REAL"),
+            ("check_out_at", "check_out_at REAL"),
+            ("status", "status TEXT DEFAULT 'on_site'"),
+            ("source_type", "source_type TEXT"),
+            ("model_name", "model_name TEXT"),
+            ("detection_confidence", "detection_confidence REAL"),
+            ("snapshot_path", "snapshot_path TEXT"),
+            ("note", "note TEXT"),
+            ("created_at", "created_at REAL"),
+            ("updated_at", "updated_at REAL"),
         ],
     )
     _ensure_columns(
@@ -1169,7 +1229,11 @@ def load_employees():
             profile_photo_url,
             reference_image_url,
             reference_count,
-            last_synced_at
+            last_synced_at,
+            presence_status,
+            last_check_in_at,
+            last_check_out_at,
+            last_presence_change_at
         FROM employees
         ORDER BY employee_number ASC, last_name ASC, first_name ASC, middle_name ASC
         """
@@ -1218,9 +1282,10 @@ def create_employee(
         INSERT INTO employees (
             full_name, last_name, first_name, middle_name, employee_number,
             department, position, status, created_at, hire_date,
-            source_system, profile_photo_url, reference_count
+            source_system, profile_photo_url, reference_count,
+            presence_status, last_check_in_at, last_check_out_at, last_presence_change_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             normalized_full_name,
@@ -1236,6 +1301,10 @@ def create_employee(
             "local",
             profile_photo_url.strip(),
             0,
+            "off_duty",
+            None,
+            None,
+            None,
         ),
     )
     conn.commit()
@@ -1402,6 +1471,254 @@ def load_access_logs():
     ).fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+def load_attendance_sessions(*, day: str | None = None, limit: int | None = 500) -> list[dict]:
+    conn = get_db_conn()
+    params: list[object] = []
+    query = """
+        SELECT
+            attendance_sessions.id,
+            attendance_sessions.employee_id,
+            attendance_sessions.access_point_id,
+            attendance_sessions.check_in_at,
+            attendance_sessions.check_out_at,
+            attendance_sessions.status,
+            attendance_sessions.source_type,
+            attendance_sessions.model_name,
+            attendance_sessions.detection_confidence,
+            attendance_sessions.snapshot_path,
+            attendance_sessions.note,
+            attendance_sessions.created_at,
+            attendance_sessions.updated_at,
+            employees.full_name AS employee_name,
+            employees.employee_number AS employee_number,
+            employees.department AS department,
+            employees.position AS position,
+            access_points.name AS access_point_name
+        FROM attendance_sessions
+        LEFT JOIN employees ON employees.id = attendance_sessions.employee_id
+        LEFT JOIN access_points ON access_points.id = attendance_sessions.access_point_id
+    """
+    if day:
+        day_start, day_end = _resolve_day_bounds(day)
+        query += " WHERE attendance_sessions.check_in_at >= ? AND attendance_sessions.check_in_at < ?"
+        params.extend([day_start, day_end])
+    query += " ORDER BY attendance_sessions.check_in_at DESC"
+    if limit is not None:
+        query += " LIMIT ?"
+        params.append(limit)
+    rows = conn.execute(query, tuple(params)).fetchall()
+    conn.close()
+    items = []
+    for row in rows:
+        item = dict(row)
+        check_in_at = float(item.get("check_in_at") or 0.0)
+        check_out_at = item.get("check_out_at")
+        if check_out_at is not None:
+            duration_seconds = max(0.0, float(check_out_at) - check_in_at)
+        else:
+            duration_seconds = max(0.0, time.time() - check_in_at)
+        item["duration_seconds"] = duration_seconds
+        items.append(item)
+    return items
+
+
+def load_attendance_today() -> dict:
+    today_key = datetime.now().strftime("%Y-%m-%d")
+    sessions = load_attendance_sessions(day=today_key, limit=1000)
+    currently_on_site = sum(1 for session in sessions if session.get("status") == "on_site" and session.get("check_out_at") is None)
+    check_ins = len(sessions)
+    check_outs = sum(1 for session in sessions if session.get("check_out_at") is not None)
+    average_duration = round(
+        sum(session["duration_seconds"] for session in sessions) / len(sessions) / 60.0,
+        1,
+    ) if sessions else 0.0
+    return {
+        "day": today_key,
+        "summary": {
+            "check_ins": check_ins,
+            "check_outs": check_outs,
+            "currently_on_site": currently_on_site,
+            "average_duration_minutes": average_duration,
+        },
+        "items": sessions,
+    }
+
+
+def register_employee_attendance(
+    *,
+    employee_id: int,
+    access_point_id: int | None,
+    model_name: str,
+    source_type: str,
+    detection_confidence: float | None,
+    snapshot_path: str = "",
+    note: str = "",
+) -> dict:
+    conn = get_db_conn()
+    employee = conn.execute(
+        """
+        SELECT id, full_name, employee_number, department, position, status
+        FROM employees
+        WHERE id = ?
+        """,
+        (employee_id,),
+    ).fetchone()
+    if employee is None:
+        conn.close()
+        raise ValueError(f"employee_not_found:{employee_id}")
+    if (employee["status"] or "").strip() != "active":
+        conn.close()
+        raise ValueError(f"employee_inactive:{employee_id}")
+
+    access_point = None
+    if access_point_id is not None:
+        access_point = conn.execute(
+            "SELECT id, name FROM access_points WHERE id = ?",
+            (access_point_id,),
+        ).fetchone()
+        if access_point is None:
+            conn.close()
+            raise ValueError(f"access_point_not_found:{access_point_id}")
+
+    now_ts = time.time()
+    open_session = conn.execute(
+        """
+        SELECT id, check_in_at
+        FROM attendance_sessions
+        WHERE employee_id = ? AND check_out_at IS NULL
+        ORDER BY check_in_at DESC
+        LIMIT 1
+        """,
+        (employee_id,),
+    ).fetchone()
+
+    if open_session is None:
+        attendance_status = "check_in"
+        cursor = conn.execute(
+            """
+            INSERT INTO attendance_sessions (
+                employee_id, access_point_id, check_in_at, check_out_at, status,
+                source_type, model_name, detection_confidence, snapshot_path, note, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                employee_id,
+                access_point_id,
+                now_ts,
+                None,
+                "on_site",
+                source_type.strip(),
+                model_name.strip(),
+                detection_confidence,
+                snapshot_path.strip(),
+                note.strip(),
+                now_ts,
+                now_ts,
+            ),
+        )
+        attendance_session_id = cursor.lastrowid
+        conn.execute(
+            """
+            UPDATE employees
+            SET presence_status = ?, last_check_in_at = ?, last_presence_change_at = ?
+            WHERE id = ?
+            """,
+            ("on_site", now_ts, now_ts, employee_id),
+        )
+        event_type = "employee_checked_in"
+        message = (
+            f"{employee['full_name']} отмечен на рабочем месте"
+            + (f" через {access_point['name']}" if access_point is not None else "")
+        )
+    else:
+        attendance_status = "check_out"
+        attendance_session_id = int(open_session["id"])
+        conn.execute(
+            """
+            UPDATE attendance_sessions
+            SET check_out_at = ?, status = ?, access_point_id = COALESCE(?, access_point_id),
+                source_type = ?, model_name = ?, detection_confidence = ?, snapshot_path = ?, note = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                now_ts,
+                "completed",
+                access_point_id,
+                source_type.strip(),
+                model_name.strip(),
+                detection_confidence,
+                snapshot_path.strip(),
+                note.strip(),
+                now_ts,
+                attendance_session_id,
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE employees
+            SET presence_status = ?, last_check_out_at = ?, last_presence_change_at = ?
+            WHERE id = ?
+            """,
+            ("off_duty", now_ts, now_ts, employee_id),
+        )
+        event_type = "employee_checked_out"
+        message = (
+            f"{employee['full_name']} завершил рабочую смену"
+            + (f" через {access_point['name']}" if access_point is not None else "")
+        )
+
+    cursor = conn.execute(
+        """
+        INSERT INTO access_logs (employee_id, timestamp, access_point_id, event_type, confidence, note)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (employee_id, now_ts, access_point_id, event_type, detection_confidence, note.strip() or message),
+    )
+    access_log_id = cursor.lastrowid
+    event_id = f"attendance-{uuid.uuid4().hex[:10]}"
+    session_id = f"portal-{access_point_id or 0}"
+    event = {
+        "event_id": event_id,
+        "session_id": session_id,
+        "event_scope": "domain",
+        "event_type": event_type,
+        "source_type": source_type.strip(),
+        "frame_index": 0,
+        "timestamp": now_ts,
+        "class_name": "person",
+        "confidence": detection_confidence or 0.0,
+        "track_id": None,
+        "roi_inside": True,
+        "message": message,
+        "access_log_id": access_log_id,
+        "employee_id": employee_id,
+        "access_point_id": access_point_id,
+        "identified_employee_id": employee_id,
+        "identification_confidence": detection_confidence,
+        "identification_status": "linked_from_directory",
+        "snapshot_path": snapshot_path.strip(),
+    }
+    conn.commit()
+    conn.close()
+    db_insert_event(event)
+    return {
+        "attendance_session_id": attendance_session_id,
+        "attendance_status": attendance_status,
+        "event_id": event_id,
+        "event_type": event_type,
+        "timestamp": now_ts,
+        "employee": {
+            "id": employee["id"],
+            "full_name": employee["full_name"],
+            "employee_number": employee["employee_number"] or "",
+            "department": employee["department"] or "",
+            "position": employee["position"] or "",
+        },
+        "access_point_name": access_point["name"] if access_point is not None else "",
+        "message": message,
+    }
 
 
 def load_events(limit=None):

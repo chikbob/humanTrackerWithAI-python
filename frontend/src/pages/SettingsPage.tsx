@@ -5,6 +5,8 @@ import { apiClient, Dictionary } from "../lib/api";
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery({ queryKey: ["system-settings"], queryFn: apiClient.settings });
+  const { data: modelsData } = useQuery({ queryKey: ["models"], queryFn: apiClient.models });
+  const { data: accessPointsData } = useQuery({ queryKey: ["access-points"], queryFn: apiClient.accessPoints });
   const [draft, setDraft] = useState<Dictionary>({});
 
   useEffect(() => {
@@ -33,6 +35,7 @@ export function SettingsPage() {
     "inference_size",
     "tracker_type",
     "incident_score_threshold",
+    "active_access_point_id",
     "notifications_enabled",
     "incident_notify_min_severity"
   ];
@@ -40,14 +43,39 @@ export function SettingsPage() {
   return (
     <section className="page-grid">
       <div className="page-heading">
-        <span className="eyebrow">System Config</span>
+        <span className="eyebrow">Runtime Configuration</span>
         <h2>Настройки системы</h2>
-        <p>Редактирование идёт пакетом через API и не вызывает полный rerun интерфейса.</p>
+        <p>Управление рабочей моделью, параметрами анализа кадров и активной проходной без возврата к legacy Streamlit-контуру.</p>
       </div>
 
       <section className="panel">
         <form className="form-grid settings-grid" onSubmit={onSubmit}>
-          {editableKeys.map((key) => (
+          <label className="field-block">
+            <span>Модель YOLO по умолчанию</span>
+            <select className="input like-select" value={draft.model_name || ""} onChange={(event) => setDraft((current) => ({ ...current, model_name: event.target.value }))}>
+              {(modelsData?.items || []).filter((item) => item.available).map((item) => (
+                <option key={item.name} value={item.name}>{item.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field-block">
+            <span>Трекер</span>
+            <select className="input like-select" value={draft.tracker_type || ""} onChange={(event) => setDraft((current) => ({ ...current, tracker_type: event.target.value }))}>
+              <option value="bytetrack">ByteTrack</option>
+              <option value="botsort">BoT-SORT</option>
+              <option value="detect_only">Только детекция</option>
+            </select>
+          </label>
+          <label className="field-block">
+            <span>Основная точка доступа</span>
+            <select className="input like-select" value={draft.active_access_point_id || ""} onChange={(event) => setDraft((current) => ({ ...current, active_access_point_id: event.target.value }))}>
+              <option value="">Не выбрана</option>
+              {(accessPointsData?.items || []).map((item) => (
+                <option key={item.id} value={String(item.id)}>{item.name}</option>
+              ))}
+            </select>
+          </label>
+          {editableKeys.filter((key) => !["model_name", "tracker_type", "active_access_point_id"].includes(key)).map((key) => (
             <label key={key} className="field-block">
               <span>{key}</span>
               <input className="input" value={draft[key] || ""} onChange={(event) => setDraft((current) => ({ ...current, [key]: event.target.value }))} />

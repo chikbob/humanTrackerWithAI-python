@@ -118,7 +118,7 @@ export function SourcesPage() {
       <div className="page-heading">
         <span className="eyebrow">Source Registry</span>
         <h2>Источники видеоданных</h2>
-        <p>Новый SPA управляет источниками без блокирующего полного перерендера всей системы.</p>
+        <p>Реестр камер, которые участвуют в нейросетевом мониторинге и сценариях проходной.</p>
       </div>
 
       <div className="content-grid two-columns">

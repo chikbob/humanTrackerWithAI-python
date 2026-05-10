@@ -1,20 +1,36 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { apiClient } from "../lib/api";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { apiClient, FrameAnalysisResponse } from "../lib/api";
 
 type DeviceOption = {
   deviceId: string;
   label: string;
 };
 
+function captureFrame(video: HTMLVideoElement | null): string | null {
+  if (!video || !video.videoWidth || !video.videoHeight) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.82);
+}
+
 export function MonitoringPage() {
   const { data: sources } = useQuery({ queryKey: ["video-sources"], queryFn: apiClient.sources, refetchInterval: 10_000 });
   const { data: telemetry } = useQuery({ queryKey: ["telemetry"], queryFn: apiClient.telemetry, refetchInterval: 10_000 });
+  const { data: modelsData } = useQuery({ queryKey: ["models"], queryFn: apiClient.models });
   const [devices, setDevices] = useState<DeviceOption[]>([]);
   const [activeDeviceId, setActiveDeviceId] = useState("");
   const [isCameraEnabled, setIsCameraEnabled] = useState(false);
+  const [isAnalysisEnabled, setIsAnalysisEnabled] = useState(false);
+  const [activeModel, setActiveModel] = useState("yolov8s.pt");
+  const [lastAnalysis, setLastAnalysis] = useState<FrameAnalysisResponse | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const analysisLockRef = useRef(false);
 
   const browserSources = useMemo(() => (sources?.items || []).filter((item) => item.source_type === "browser_camera"), [sources]);
   const serverSources = useMemo(() => (sources?.items || []).filter((item) => item.source_type !== "browser_camera"), [sources]);
@@ -53,38 +69,139 @@ export function MonitoringPage() {
     };
   }, [activeDeviceId, isCameraEnabled]);
 
+  const analyzeMutation = useMutation({
+    mutationFn: async () => {
+      const imageBase64 = captureFrame(videoRef.current);
+      if (!imageBase64) {
+        throw new Error("Нет доступного кадра для анализа.");
+      }
+      return apiClient.analyzeFrame({
+        image_base64: imageBase64,
+        model_name: activeModel
+      });
+    },
+    onSuccess: (payload) => {
+      setLastAnalysis(payload);
+    },
+    onSettled: () => {
+      analysisLockRef.current = false;
+    }
+  });
+
+  useEffect(() => {
+    if (!isAnalysisEnabled || !isCameraEnabled) return;
+    const timer = window.setInterval(() => {
+      if (analysisLockRef.current) return;
+      analysisLockRef.current = true;
+      analyzeMutation.mutate();
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [analyzeMutation, isAnalysisEnabled, isCameraEnabled]);
+
   return (
     <section className="page-grid">
       <div className="page-heading">
-        <span className="eyebrow">Operator Workspace</span>
+        <span className="eyebrow">Realtime Monitoring</span>
         <h2>Операторский мониторинг</h2>
-        <p>
-          Локальная камера MacBook и камера телефона на проде теперь рассматриваются как browser-device sources:
-          захват идёт у клиента, а не через блокирующий серверный rerun.
-        </p>
+        <p>Экран снова выполняет основную задачу системы: получает видеокадр, прогоняет его через выбранную YOLO-модель и показывает обнаружение человека в реальном времени.</p>
       </div>
 
       <div className="content-grid two-columns">
         <section className="panel media-panel">
           <div className="panel-header">
-            <h3>Камера текущего устройства</h3>
-            <span>{devices.length} доступно</span>
+            <div>
+              <h3>Живой видеопоток устройства</h3>
+              <p className="panel-subtitle">Камера MacBook, внешняя USB-камера или мобильный браузер по HTTPS.</p>
+            </div>
+            <span>{devices.length} камер</span>
           </div>
-          <div className="device-toolbar">
-            <select className="input like-select" value={activeDeviceId} onChange={(event) => setActiveDeviceId(event.target.value)}>
-              {devices.map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label}</option>)}
-            </select>
-            <button className="button" onClick={() => setIsCameraEnabled((value) => !value)}>
-              {isCameraEnabled ? "Остановить preview" : "Запустить preview"}
+          <div className="triple-grid">
+            <label className="field-block">
+              <span>Камера</span>
+              <select className="input like-select" value={activeDeviceId} onChange={(event) => setActiveDeviceId(event.target.value)}>
+                {devices.map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label}</option>)}
+              </select>
+            </label>
+            <label className="field-block">
+              <span>Модель</span>
+              <select className="input like-select" value={activeModel} onChange={(event) => setActiveModel(event.target.value)}>
+                {(modelsData?.items || []).filter((item) => item.available).map((item) => (
+                  <option key={item.name} value={item.name}>{item.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field-block">
+              <span>Режим</span>
+              <select className="input like-select" value={isAnalysisEnabled ? "analysis" : "preview"} onChange={(event) => setIsAnalysisEnabled(event.target.value === "analysis")}>
+                <option value="preview">Только превью</option>
+                <option value="analysis">Непрерывный анализ</option>
+              </select>
+            </label>
+          </div>
+          <div className="button-row">
+            <button className="button secondary" onClick={() => setIsCameraEnabled((value) => !value)}>
+              {isCameraEnabled ? "Остановить поток" : "Запустить поток"}
+            </button>
+            <button className="button" disabled={!isCameraEnabled || analyzeMutation.isPending} onClick={() => analyzeMutation.mutate()}>
+              {analyzeMutation.isPending ? "Анализ..." : "Проверить текущий кадр"}
             </button>
           </div>
           <div className="video-frame">
             <video ref={videoRef} muted playsInline />
           </div>
-          <p className="compact-note">
-            На локальном MacBook это даст встроенную камеру. На проде через HTTPS тот же экран сможет открыть
-            камеру ноутбука или телефона пользователя без перезапуска всего UI.
-          </p>
+          {analyzeMutation.error instanceof Error && <div className="inline-warning">{analyzeMutation.error.message}</div>}
+        </section>
+
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h3>Результат нейросетевого анализа</h3>
+              <p className="panel-subtitle">Аннотированный кадр, количество людей и производительность модели.</p>
+            </div>
+          </div>
+          {lastAnalysis ? (
+            <div className="list-stack">
+              <img className="analysis-preview" src={lastAnalysis.annotated_image_base64} alt="Annotated monitoring frame" />
+              <article className="stat-line">
+                <strong>Модель</strong>
+                <span>{lastAnalysis.model_name}</span>
+              </article>
+              <article className="stat-line">
+                <strong>Людей в кадре</strong>
+                <span>{lastAnalysis.person_count}</span>
+              </article>
+              <article className="stat-line">
+                <strong>Время анализа</strong>
+                <span>{lastAnalysis.processing_time_ms} мс</span>
+              </article>
+              <article className="stat-line">
+                <strong>Детекций</strong>
+                <span>{lastAnalysis.detections.length}</span>
+              </article>
+            </div>
+          ) : (
+            <div className="page-state">Выполните анализ кадра, чтобы увидеть результат распознавания.</div>
+          )}
+        </section>
+      </div>
+
+      <div className="content-grid two-columns">
+        <section className="panel">
+          <div className="panel-header">
+            <h3>Источники браузерных камер</h3>
+            <span>{browserSources.length}</span>
+          </div>
+          <div className="list-stack">
+            {browserSources.map((source) => (
+              <article key={source.id} className="source-card">
+                <div>
+                  <strong>{source.name}</strong>
+                  <p>{source.location || "Без локации"}</p>
+                </div>
+                <div className="muted-tag">{source.is_active ? "активен" : "выключен"}</div>
+              </article>
+            ))}
+          </div>
         </section>
 
         <section className="panel">
@@ -94,12 +211,12 @@ export function MonitoringPage() {
           </div>
           <div className="list-stack">
             <article className="stat-line">
-              <strong>Browser/WebRTC sources</strong>
-              <span>{browserSources.length}</span>
+              <strong>Серверные источники</strong>
+              <span>{serverSources.length}</span>
             </article>
             <article className="stat-line">
-              <strong>Server-managed sources</strong>
-              <span>{serverSources.length}</span>
+              <strong>Browser/WebRTC источники</strong>
+              <span>{browserSources.length}</span>
             </article>
             <article className="stat-line">
               <strong>Readiness</strong>
