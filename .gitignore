@@ -19,3 +19,8 @@ logs/
 
 # Model weights (downloaded automatically by Ultralytics when needed)
 *.pt
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
