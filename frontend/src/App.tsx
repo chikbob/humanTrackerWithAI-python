@@ -1,6 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { Activity, Camera, LayoutDashboard, Radio, ScanFace, Settings, ShieldAlert, Users } from "lucide-react";
+import { Activity, Camera, LayoutDashboard, PanelLeftClose, PanelLeftOpen, Radio, ScanFace, Settings, ShieldAlert, Users } from "lucide-react";
 import { DashboardPage } from "./pages/DashboardPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
@@ -29,14 +29,29 @@ const navItems: NavItem[] = [
 
 export function App() {
   const buildStamp = useMemo(() => new Date().toLocaleString("ru-RU"), []);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
       <aside className="app-sidebar">
+        <div className="sidebar-toolbar">
+          <button
+            className="sidebar-toggle"
+            type="button"
+            onClick={() => setSidebarCollapsed((value) => !value)}
+            aria-label={sidebarCollapsed ? "Развернуть меню" : "Свернуть меню"}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
+        </div>
         <div className="brand-block">
           <span className="brand-eyebrow">NeuroGate</span>
-          <h1>Система мониторинга и интеллектуального анализа объектов</h1>
-          <p>Контур видеомониторинга, проходной сотрудников и аналитики в реальном времени на основе нейросетевых моделей YOLOv8.</p>
+          {!sidebarCollapsed && (
+            <>
+              <h1>Система мониторинга и интеллектуального анализа объектов</h1>
+              <p>Контур видеомониторинга, проходной сотрудников и аналитики в реальном времени на основе нейросетевых моделей YOLOv8.</p>
+            </>
+          )}
         </div>
         <nav className="nav-list">
           {navItems.map((item) => {
@@ -48,26 +63,22 @@ export function App() {
                 className={({ isActive }) => `nav-item${isActive ? " is-active" : ""}`}
               >
                 <Icon size={18} />
-                <span>{item.label}</span>
+                {!sidebarCollapsed && <span>{item.label}</span>}
               </NavLink>
             );
           })}
         </nav>
         <div className="sidebar-footnote">
-          <span>Актуальная сборка</span>
-          <strong>{buildStamp}</strong>
+          {!sidebarCollapsed && (
+            <>
+              <span>Актуальная сборка</span>
+              <strong>{buildStamp}</strong>
+            </>
+          )}
         </div>
       </aside>
 
       <main className="app-main">
-        <header className="app-topbar">
-          <div>
-            <span className="topbar-label">NeuroGate</span>
-            <strong>Контроль проходной, мониторинг камер и событий</strong>
-          </div>
-          <div className="topbar-chip">YOLOv8 · FastAPI · React</div>
-        </header>
-
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
