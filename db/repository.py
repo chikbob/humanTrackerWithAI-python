@@ -2998,8 +2998,14 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
     conn = get_db_conn()
     rng = random.Random(seed)
     now_ts = time.time()
+    today_start_dt = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start_ts = today_start_dt.timestamp()
 
     for table_name in [
+        "notification_deliveries",
+        "incidents",
+        "attendance_sessions",
+        "audit_logs",
         "worker_status",
         "detection_events",
         "access_logs",
@@ -3013,7 +3019,10 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
     ]:
         conn.execute(f"DELETE FROM {table_name}")
     conn.execute(
-        "DELETE FROM sqlite_sequence WHERE name IN ('employees', 'access_points', 'access_logs', 'frames', 'video_sources')"
+        "DELETE FROM sqlite_sequence WHERE name IN ("
+        "'employees', 'access_points', 'access_logs', 'frames', 'video_sources', "
+        "'attendance_sessions', 'incidents', 'audit_logs'"
+        ")"
     )
 
     for key, value in SYSTEM_SETTING_DEFAULTS.items():
@@ -3096,6 +3105,7 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
     ]
     employee_statuses = ["active", "active", "active", "inactive", "on_leave", "blocked"]
     employee_ids = []
+    active_employee_ids = []
     for index in range(employee_count):
         is_female = index % 2 == 1
         if is_female:
@@ -3108,6 +3118,7 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
             middle_name = male_patronymics[(index * 5) % len(male_patronymics)]
         full_name = build_employee_full_name(last_name, first_name, middle_name)
         hire_date = now_ts - rng.randint(120, 2400) * 86400
+        status = rng.choice(employee_statuses)
         cursor = conn.execute(
             """
             INSERT INTO employees (
@@ -3125,7 +3136,7 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
                 f"EMP-{10000 + index}",
                 rng.choice(departments),
                 rng.choice(positions),
-                rng.choice(employee_statuses),
+                status,
                 now_ts - rng.randint(10, 180) * 86400,
                 hire_date,
                 "local",
@@ -3134,6 +3145,8 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
             ),
         )
         employee_ids.append(cursor.lastrowid)
+        if status == "active":
+            active_employee_ids.append(cursor.lastrowid)
 
     video_sources = [
         {
@@ -3269,6 +3282,35 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
                     rng.randint(40, 220),
                 ),
             )
+
+    live_session_ids = []
+    for source_id in source_ids[:3]:
+        started_at = today_start_ts + 6 * 3600 + rng.randint(0, 1800)
+        session_id = f"live-{source_id}-{uuid.uuid4().hex[:8]}"
+        session_ids.append((session_id, source_id, started_at))
+        live_session_ids.append((session_id, source_id, started_at))
+        conn.execute(
+            """
+            INSERT INTO sessions (
+                id, model, source_type, source_path, animal_filter, class_filter,
+                rotation_angle, started_at, finished_at, total_frames, processed_frames, events_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                "yolov8s.pt",
+                "rtsp",
+                f"rtsp://live-source-{source_id}",
+                "всё",
+                json.dumps(["person"], ensure_ascii=False),
+                0,
+                started_at,
+                None,
+                rng.randint(1200, 3600),
+                rng.randint(1100, 3400),
+                rng.randint(60, 180),
+            ),
+        )
 
     suspicious_types = ["prolonged_presence_near_entry", "unknown_person_detected", "repeated_entry_attempt"]
     raw_types = ["object_detected", "roi_enter", "roi_exit", "object_disappeared"]
@@ -3432,6 +3474,185 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
                 ),
             )
 
+    today_visit_count = min(max(24, employee_count // 3), max(24, len(active_employee_ids)))
+    incident_status_cycle = ["new", "acknowledged", "in_progress", "resolved", "false_positive"]
+    assigned_to_cycle = ["", "Оператор Сидоров", "Старший смены Кузнецова", ""]
+    for live_index in range(today_visit_count):
+        session_id, source_id, session_started_at = live_session_ids[live_index % len(live_session_ids)]
+        employee_id = active_employee_ids[live_index % len(active_employee_ids)]
+        access_point_id = access_point_ids[live_index % len(access_point_ids)]
+        base_hour = 7 + (live_index % 11)
+        event_ts = today_start_ts + base_hour * 3600 + rng.randint(0, 3200)
+        confidence = round(rng.uniform(0.78, 0.99), 3)
+        base_track = 1000 + live_index
+        has_checkout = rng.random() < (0.7 if event_ts < now_ts - 3 * 3600 else 0.35)
+        check_out_at = event_ts + rng.randint(1800, 9 * 3600) if has_checkout else None
+
+        access_cursor = conn.execute(
+            """
+            INSERT INTO access_logs (employee_id, timestamp, access_point_id, event_type, confidence, note)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                employee_id,
+                event_ts,
+                access_point_id,
+                "person_entered_entry_zone",
+                confidence,
+                "Демонстрационный проход текущего дня",
+            ),
+        )
+        access_log_id = access_cursor.lastrowid
+
+        conn.execute(
+            """
+            INSERT INTO attendance_sessions (
+                employee_id, access_point_id, check_in_at, check_out_at, status, source_type,
+                model_name, detection_confidence, snapshot_path, note, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                employee_id,
+                access_point_id,
+                event_ts,
+                check_out_at,
+                "checked_out" if check_out_at is not None else "on_site",
+                "rtsp",
+                "yolov8s.pt",
+                confidence,
+                "",
+                "Синтетическая attendance-сессия для dev-демо",
+                event_ts,
+                check_out_at or max(event_ts, now_ts - rng.randint(60, 1800)),
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE employees
+            SET presence_status = ?, last_check_in_at = ?, last_check_out_at = ?, last_presence_change_at = ?
+            WHERE id = ?
+            """,
+            (
+                "off_duty" if check_out_at is not None else "on_site",
+                event_ts,
+                check_out_at,
+                check_out_at or event_ts,
+                employee_id,
+            ),
+        )
+
+        domain_events = [
+            ("person_detected_near_entry", max(session_started_at + 5, event_ts - 6), "Сотрудник зафиксирован в зоне подхода"),
+            ("person_entered_entry_zone", event_ts, "Сотрудник вошел в зону прохода"),
+            ("person_left_entry_zone", event_ts + rng.randint(10, 80), "Сотрудник покинул зону прохода"),
+        ]
+        if live_index % 4 == 0:
+            domain_events.append(
+                (
+                    suspicious_types[live_index % len(suspicious_types)],
+                    event_ts + rng.randint(15, 180),
+                    "Синтетический инцидент текущего дня",
+                )
+            )
+
+        for event_type, timestamp_value, message in domain_events:
+            event_id = uuid.uuid4().hex[:8]
+            conn.execute(
+                """
+                INSERT INTO events (
+                    event_id, session_id, event_type, source_type, frame_index, timestamp,
+                    class_name, confidence, track_id, animal_group, is_animal, roi_inside,
+                    center_x, center_y, frame_width, frame_height, message, event_scope,
+                    access_log_id, employee_id, access_point_id, identified_employee_id,
+                    identification_confidence, identification_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    session_id,
+                    event_type,
+                    "rtsp",
+                    live_index % 500,
+                    timestamp_value,
+                    "person",
+                    confidence,
+                    str(base_track),
+                    None,
+                    0,
+                    1,
+                    rng.uniform(120, 540),
+                    rng.uniform(90, 360),
+                    640,
+                    480,
+                    message,
+                    "domain",
+                    access_log_id,
+                    employee_id,
+                    access_point_id,
+                    employee_id,
+                    round(rng.uniform(0.79, 0.97), 3),
+                    "linked_from_directory",
+                ),
+            )
+            if event_type in suspicious_types:
+                incident_status = incident_status_cycle[(live_index // 4) % len(incident_status_cycle)]
+                started_at = timestamp_value
+                acknowledged_at = started_at + rng.randint(60, 600) if incident_status in {"acknowledged", "in_progress", "resolved", "false_positive"} else None
+                resolved_at = (
+                    acknowledged_at + rng.randint(300, 1800)
+                    if acknowledged_at is not None and incident_status in {"resolved", "false_positive"}
+                    else None
+                )
+                conn.execute(
+                    """
+                    INSERT INTO incidents (
+                        event_id, source_id, zone_name, incident_type, severity, status, confidence,
+                        snapshot_path, evidence_clip_path, evidence_retention_until, operator_comment,
+                        assigned_to, acknowledged_at, resolved_at, resolution_code, resolution_notes,
+                        employee_id, identification_status, started_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        source_id,
+                        "Входная группа",
+                        event_type,
+                        "critical" if live_index % 12 == 0 else ("high" if live_index % 8 == 0 else "medium"),
+                        incident_status,
+                        confidence,
+                        "",
+                        "",
+                        started_at + 14 * 86400,
+                        "Автоматически создано сидером для dev-демо",
+                        assigned_to_cycle[(live_index // 4) % len(assigned_to_cycle)],
+                        acknowledged_at,
+                        resolved_at,
+                        "demo_resolution" if resolved_at is not None else "",
+                        "Синтетическая запись для демонстрации очереди инцидентов" if resolved_at is not None else "",
+                        employee_id,
+                        "linked_from_directory",
+                        started_at,
+                        resolved_at or acknowledged_at or max(started_at, now_ts - rng.randint(30, 900)),
+                    ),
+                )
+
+        conn.execute(
+            """
+            INSERT INTO audit_logs (
+                actor_name, actor_role, action, resource_type, resource_id, details_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "demo-seeder",
+                "system",
+                "attendance.session_seeded",
+                "attendance_session",
+                f"employee:{employee_id}",
+                json.dumps({"access_point_id": access_point_id, "event_ts": event_ts}, ensure_ascii=False),
+                event_ts,
+            ),
+        )
+
     for offline_index in range(24):
         event_id = uuid.uuid4().hex[:8]
         timestamp_value = now_ts - offline_index * 21600
@@ -3482,4 +3703,5 @@ def reset_and_seed_demo_data(*, employee_count: int = 120, visit_count: int = 90
         "video_sources": len(video_sources),
         "visits": visit_count,
         "sessions": len(session_ids),
+        "attendance_today": today_visit_count,
     }

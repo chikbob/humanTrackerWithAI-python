@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { Activity, Camera, LayoutDashboard, PanelLeftClose, PanelLeftOpen, Radio, ScanFace, Settings, ShieldAlert, Users } from "lucide-react";
+import { Activity, BarChart3, Camera, LayoutDashboard, PanelLeftClose, PanelLeftOpen, Radio, ScanFace, Settings, ShieldAlert, Users } from "lucide-react";
 import { DashboardPage } from "./pages/DashboardPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
 import { MonitoringPage } from "./pages/MonitoringPage";
@@ -9,6 +9,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { DirectoryPage } from "./pages/DirectoryPage";
 import { AuditPage } from "./pages/AuditPage";
 import { AttendancePage } from "./pages/AttendancePage";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
 
 type NavItem = {
   to: string;
@@ -21,14 +22,14 @@ const navItems: NavItem[] = [
   { to: "/monitoring", label: "Операторский мониторинг", icon: Radio },
   { to: "/checkpoint", label: "КПП сотрудников", icon: ScanFace },
   { to: "/incidents", label: "Инциденты", icon: ShieldAlert },
+  { to: "/analytics", label: "Аналитика", icon: BarChart3 },
   { to: "/sources", label: "Источники", icon: Camera },
   { to: "/directory", label: "Персонал", icon: Users },
   { to: "/settings", label: "Настройки", icon: Settings },
-  { to: "/audit", label: "Аудит", icon: Activity }
+  { to: "/audit", label: "Журнал событий", icon: Activity }
 ];
 
 export function App() {
-  const buildStamp = useMemo(() => new Date().toLocaleString("ru-RU"), []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (
@@ -68,14 +69,6 @@ export function App() {
             );
           })}
         </nav>
-        <div className="sidebar-footnote">
-          {!sidebarCollapsed && (
-            <>
-              <span>Актуальная сборка</span>
-              <strong>{buildStamp}</strong>
-            </>
-          )}
-        </div>
       </aside>
 
       <main className="app-main">
@@ -85,6 +78,7 @@ export function App() {
           <Route path="/monitoring" element={<MonitoringPage />} />
           <Route path="/checkpoint" element={<AttendancePage />} />
           <Route path="/incidents" element={<IncidentsPage />} />
+          <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/sources" element={<SourcesPage />} />
           <Route path="/directory" element={<DirectoryPage />} />
           <Route path="/settings" element={<SettingsPage />} />

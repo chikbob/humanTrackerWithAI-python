@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, AttendanceCheckpointResponse, Employee } from "../lib/api";
-
-type DeviceOption = {
-  deviceId: string;
-  label: string;
-};
+import { DeviceOption, listVideoInputDevices } from "../lib/mediaDevices";
 
 function captureFrame(video: HTMLVideoElement | null): string | null {
   if (!video || !video.videoWidth || !video.videoHeight) return null;
@@ -32,6 +28,34 @@ function buildEmployeeLabel(employee: Employee) {
   return parts.join(" · ");
 }
 
+async function syncDevices(
+  activeDeviceId: string,
+  setDevices: (devices: DeviceOption[]) => void,
+  setActiveDeviceId: (deviceId: string) => void,
+  fallbackLabel?: string
+) {
+  const cameras = await listVideoInputDevices();
+  if (cameras.length > 0) {
+    setDevices(cameras);
+    if (!activeDeviceId || cameras.every((camera) => camera.deviceId !== activeDeviceId)) {
+      setActiveDeviceId(cameras[0].deviceId);
+    }
+    return cameras;
+  }
+
+  if (fallbackLabel) {
+    const fallbackDevice = { deviceId: "default", label: fallbackLabel };
+    setDevices([fallbackDevice]);
+    if (!activeDeviceId) {
+      setActiveDeviceId(fallbackDevice.deviceId);
+    }
+    return [fallbackDevice];
+  }
+
+  setDevices([]);
+  return [];
+}
+
 export function AttendancePage() {
   const queryClient = useQueryClient();
   const { data: employeesData } = useQuery({ queryKey: ["employees"], queryFn: apiClient.employees, refetchInterval: 20_000 });
@@ -53,7 +77,10 @@ export function AttendancePage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const availableEmployees = useMemo(() => employeesData?.items || [], [employeesData]);
+  const availableEmployees = useMemo(
+    () => (employeesData?.items || []).filter((employee) => (employee.status || "").trim() === "active"),
+    [employeesData]
+  );
   const filteredEmployees = useMemo(() => {
     const normalized = search.trim().toLowerCase();
     if (!normalized) return availableEmployees;
@@ -64,7 +91,11 @@ export function AttendancePage() {
   }, [availableEmployees, search]);
 
   useEffect(() => {
-    if (!selectedEmployeeId && availableEmployees[0]) {
+    if (!availableEmployees.length) {
+      setSelectedEmployeeId(0);
+      return;
+    }
+    if (!selectedEmployeeId || availableEmployees.every((employee) => employee.id !== selectedEmployeeId)) {
       setSelectedEmployeeId(availableEmployees[0].id);
     }
   }, [availableEmployees, selectedEmployeeId]);
@@ -83,30 +114,36 @@ export function AttendancePage() {
 
   useEffect(() => {
     async function readDevices() {
-      if (!navigator.mediaDevices?.enumerateDevices) return;
-      const items = await navigator.mediaDevices.enumerateDevices();
-      const cameras = items
-        .filter((item) => item.kind === "videoinput")
-        .map((item, index) => ({ deviceId: item.deviceId, label: item.label || `Камера ${index + 1}` }));
-      setDevices(cameras);
-      if (!activeDeviceId && cameras[0]) {
-        setActiveDeviceId(cameras[0].deviceId);
-      }
+      await syncDevices(activeDeviceId, setDevices, setActiveDeviceId);
     }
+
     void readDevices();
+    navigator.mediaDevices?.addEventListener?.("devicechange", readDevices);
+    return () => navigator.mediaDevices?.removeEventListener?.("devicechange", readDevices);
   }, [activeDeviceId]);
 
   useEffect(() => {
     async function startCamera() {
-      if (!cameraEnabled || !activeDeviceId || !navigator.mediaDevices?.getUserMedia) return;
+      if (!cameraEnabled || !navigator.mediaDevices?.getUserMedia) return;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { ideal: activeDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: activeDeviceId && activeDeviceId !== "default"
+          ? { deviceId: { ideal: activeDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+          : { width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false
       });
       streamRef.current = stream;
+      const [videoTrack] = stream.getVideoTracks();
+      const resolvedDeviceId = videoTrack?.getSettings().deviceId || activeDeviceId;
+      const resolvedLabel = videoTrack?.label || "Камера устройства";
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
+      }
+      const cameras = await syncDevices(resolvedDeviceId, setDevices, setActiveDeviceId, resolvedLabel);
+      if (!cameras.length && resolvedDeviceId) {
+        setActiveDeviceId(resolvedDeviceId);
       }
     }
 
@@ -212,6 +249,7 @@ export function AttendancePage() {
               <label className="field-block">
                 <span>Камера</span>
                 <select className="input like-select" value={activeDeviceId} onChange={(event) => setActiveDeviceId(event.target.value)}>
+                  {!devices.length && <option value="">Сначала включите камеру</option>}
                   {devices.map((device) => (
                     <option key={device.deviceId} value={device.deviceId}>{device.label}</option>
                   ))}
@@ -235,6 +273,9 @@ export function AttendancePage() {
 
           {checkpointMutation.error instanceof Error && (
             <div className="inline-warning">{checkpointMutation.error.message}</div>
+          )}
+          {!availableEmployees.length && (
+            <div className="inline-warning">Нет активных сотрудников для отметки входа и выхода.</div>
           )}
         </section>
 

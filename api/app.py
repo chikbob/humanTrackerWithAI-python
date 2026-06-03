@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from analytics.access import enrich_event_rows
 from db.repository import (
     append_audit_log,
+    create_employee,
     create_video_source,
     init_db,
     link_event_to_employee,
@@ -20,6 +21,7 @@ from db.repository import (
     load_access_points,
     load_audit_logs,
     load_employees,
+    load_employee_sync_state,
     load_events,
     load_incidents,
     register_employee_attendance,
@@ -28,6 +30,8 @@ from db.repository import (
     load_worker_statuses,
     set_system_setting,
     set_video_source_active,
+    update_employee,
+    update_employee_status,
     update_incident_status,
     update_video_source,
 )
@@ -86,6 +90,23 @@ class SystemSettingPayload(ActorPayload):
 
 class SystemSettingsBulkPayload(ActorPayload):
     items: dict[str, str]
+
+
+class EmployeePayload(ActorPayload):
+    full_name: str = Field(min_length=1)
+    last_name: str = ""
+    first_name: str = ""
+    middle_name: str = ""
+    employee_number: str = ""
+    department: str = ""
+    position: str = ""
+    status: str = Field(min_length=1)
+    hire_date: float | None = None
+    profile_photo_url: str = ""
+
+
+class EmployeeStatusPayload(ActorPayload):
+    status: str = Field(min_length=1)
 
 
 class FrameAnalysisPayload(BaseModel):
@@ -374,6 +395,55 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/employees")
     def get_employees():
         return {"items": load_employees()}
+
+    @app.get("/api/v1/employees/sync-state")
+    def get_employee_sync_state():
+        return {"item": load_employee_sync_state()}
+
+    @app.post("/api/v1/employees")
+    def post_employee(payload: EmployeePayload):
+        create_employee(**payload.model_dump(exclude={"actor_name", "actor_role"}))
+        append_audit_log(
+            actor_name=payload.actor_name,
+            actor_role=payload.actor_role,
+            action="employee.created",
+            resource_type="employee",
+            resource_id=payload.employee_number or payload.full_name,
+            details={"status": payload.status, "department": payload.department},
+        )
+        return {"ok": True}
+
+    @app.put("/api/v1/employees/{employee_id}")
+    def put_employee(employee_id: int, payload: EmployeePayload):
+        existing = {employee["id"] for employee in load_employees()}
+        if employee_id not in existing:
+            raise HTTPException(status_code=404, detail="employee_not_found")
+        update_employee(employee_id=employee_id, **payload.model_dump(exclude={"actor_name", "actor_role"}))
+        append_audit_log(
+            actor_name=payload.actor_name,
+            actor_role=payload.actor_role,
+            action="employee.updated",
+            resource_type="employee",
+            resource_id=str(employee_id),
+            details={"status": payload.status, "department": payload.department},
+        )
+        return {"ok": True, "employee_id": employee_id}
+
+    @app.put("/api/v1/employees/{employee_id}/status")
+    def put_employee_status(employee_id: int, payload: EmployeeStatusPayload):
+        existing = {employee["id"] for employee in load_employees()}
+        if employee_id not in existing:
+            raise HTTPException(status_code=404, detail="employee_not_found")
+        update_employee_status(employee_id=employee_id, status=payload.status)
+        append_audit_log(
+            actor_name=payload.actor_name,
+            actor_role=payload.actor_role,
+            action="employee.status_updated",
+            resource_type="employee",
+            resource_id=str(employee_id),
+            details={"status": payload.status},
+        )
+        return {"ok": True, "employee_id": employee_id, "status": payload.status}
 
     @app.get("/api/v1/events")
     def get_events(limit: int = Query(200, ge=1, le=5000)):

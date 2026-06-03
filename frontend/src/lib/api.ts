@@ -57,25 +57,52 @@ export type Incident = {
 
 export type EventItem = {
   event_id: string;
+  session_id?: string;
+  event_scope?: string;
   source_name?: string;
+  source_type?: string;
   access_point_name?: string;
   event_type?: string;
   timestamp?: number;
   message?: string;
   employee_name?: string;
+  employee_id?: number | null;
+  employee_number?: string;
+  employee_department?: string;
+  employee_status?: string;
+  confidence?: number | null;
+  identification_status?: string;
+  identification_confidence?: number | null;
+  incident_score?: number | null;
+  snapshot_path?: string;
 };
 
 export type Employee = {
   id: number;
   full_name: string;
   display_name?: string;
+  last_name?: string;
+  first_name?: string;
+  middle_name?: string;
   employee_number?: string;
   department?: string;
   position?: string;
   status?: string;
+  hire_date?: number | null;
+  source_system?: string;
+  last_synced_at?: number | null;
   presence_status?: string;
   last_check_in_at?: number | null;
   last_check_out_at?: number | null;
+};
+
+export type EmployeeSyncState = {
+  data_source?: string;
+  sync_status?: string;
+  last_synced_at?: number | null;
+  last_error?: string;
+  cache_mode?: string;
+  updated_at?: number | null;
 };
 
 export type AccessPoint = {
@@ -185,11 +212,29 @@ const jsonHeaders = {
   "Content-Type": "application/json"
 };
 
+function mapApiError(detail: string) {
+  if (detail.startsWith("employee_inactive:")) return "Выбранный сотрудник не активен и не может быть отмечен.";
+  if (detail.startsWith("employee_not_found:")) return "Сотрудник не найден.";
+  if (detail.startsWith("access_point_not_found:")) return "Точка доступа не найдена.";
+  if (detail === "person_not_detected") return "Человек в кадре не обнаружен.";
+  if (detail === "multiple_people_detected") return "В кадре должно быть только одно лицо/один человек.";
+  return detail;
+}
+
 async function api<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init);
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `request_failed:${response.status}`);
+    let parsedDetail = "";
+    try {
+      const payload = JSON.parse(text) as { detail?: string };
+      if (payload.detail) {
+        parsedDetail = payload.detail;
+      }
+    } catch {
+      // Fall through to plain-text error handling.
+    }
+    throw new Error(mapApiError(parsedDetail || text || `request_failed:${response.status}`));
   }
   return response.json() as Promise<T>;
 }
@@ -198,6 +243,7 @@ export const apiClient = {
   dashboardSummary: () => api<DashboardSummary>("/api/v1/dashboard/summary?event_limit=400"),
   telemetry: () => api<TelemetryPayload>("/api/v1/telemetry"),
   incidents: () => api<{ items: Incident[]; summary: Record<string, unknown> }>("/api/v1/incidents?limit=500"),
+  events: (limit = 1000) => api<{ items: EventItem[] }>(`/api/v1/events?limit=${limit}`),
   sources: () => api<{ items: VideoSource[] }>("/api/v1/video-sources"),
   workerStatuses: () => api<{ items: WorkerStatus[] }>("/api/v1/worker-status"),
   settings: () => api<{ items: Dictionary }>("/api/v1/system/settings"),
@@ -205,7 +251,28 @@ export const apiClient = {
   accessPoints: () => api<{ items: AccessPoint[] }>("/api/v1/access-points"),
   attendanceToday: () => api<AttendanceTodayPayload>("/api/v1/attendance/today"),
   employees: () => api<{ items: Employee[] }>("/api/v1/employees"),
+  employeeSyncState: () => api<{ item: EmployeeSyncState | null }>("/api/v1/employees/sync-state"),
   auditLogs: () => api<{ items: Array<Record<string, unknown>> }>("/api/v1/audit-logs?limit=200"),
+  createEmployee: (payload: Record<string, unknown>) =>
+    api<{ ok: boolean }>("/api/v1/employees", { method: "POST", headers: jsonHeaders, body: JSON.stringify(payload) }),
+  updateEmployee: (employeeId: number, payload: Record<string, unknown>) =>
+    api<{ ok: boolean; employee_id: number }>(`/api/v1/employees/${employeeId}`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify(payload)
+    }),
+  updateEmployeeStatus: (employeeId: number, payload: Record<string, unknown>) =>
+    api<{ ok: boolean; employee_id: number; status: string }>(`/api/v1/employees/${employeeId}/status`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify(payload)
+    }),
+  linkEventToEmployee: (eventId: string, payload: Record<string, unknown>) =>
+    api<{ event_id: string; employee_id: number; identification_status: string }>(`/api/v1/events/${eventId}/link`, {
+      method: "PUT",
+      headers: jsonHeaders,
+      body: JSON.stringify(payload)
+    }),
   createSource: (payload: Record<string, unknown>) =>
     api<{ ok: boolean }>("/api/v1/video-sources", { method: "POST", headers: jsonHeaders, body: JSON.stringify(payload) }),
   updateSource: (sourceId: number, payload: Record<string, unknown>) =>

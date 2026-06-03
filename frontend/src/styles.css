@@ -58,16 +58,14 @@ img {
 }
 
 .app-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  padding: 28px 24px;
+  padding: 18px 16px 48px;
   border-right: 1px solid var(--line);
   background: linear-gradient(180deg, rgba(7, 17, 31, 0.98), rgba(8, 19, 35, 0.92));
   position: sticky;
   top: 0;
   height: 100vh;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .sidebar-toolbar {
@@ -132,6 +130,7 @@ img {
   display: grid;
   gap: 10px;
   min-height: 0;
+  padding-bottom: 40px;
 }
 
 .nav-item {
@@ -150,14 +149,6 @@ img {
 .nav-item.is-active {
   background: linear-gradient(135deg, rgba(29, 161, 255, 0.18), rgba(55, 211, 167, 0.14));
   border-color: rgba(55, 211, 167, 0.22);
-}
-
-.sidebar-footnote {
-  margin-top: auto;
-  padding-top: 20px;
-  display: grid;
-  gap: 6px;
-  color: var(--muted);
 }
 
 .app-main {
@@ -343,6 +334,19 @@ img {
   letter-spacing: 0.08em;
 }
 
+.data-table tbody tr {
+  cursor: pointer;
+}
+
+.data-table tbody tr:hover td {
+  background: rgba(29, 161, 255, 0.06);
+}
+
+.data-table tbody tr.row-selected td,
+tr.row-selected td {
+  background: rgba(29, 161, 255, 0.12);
+}
+
 .sort-button {
   border: none;
   background: transparent;
@@ -373,6 +377,11 @@ img {
 .input:focus {
   outline: 1px solid rgba(55, 211, 167, 0.42);
   border-color: rgba(55, 211, 167, 0.42);
+}
+
+textarea.input {
+  min-height: 100px;
+  resize: vertical;
 }
 
 .textarea {
