@@ -161,6 +161,20 @@ scripts\start_windows_local_api.ps1
 scripts\start_windows_local_api.cmd
 ```
 
+Для удаленного Railway/HTTPS-сайта, когда сам проект локально не развернут, можно поднимать только companion bridge:
+
+```powershell
+scripts\start_windows_camera_bridge.ps1
+```
+
+или
+
+```cmd
+scripts\start_windows_camera_bridge.cmd
+```
+
+В этом режиме веб-приложение продолжает открываться с Railway, но при падении встроенной камеры Windows в браузере пробует локальный bridge на `127.0.0.1:8123`.
+
 ### 3. Запуск фонового worker
 
 В отдельном терминале:

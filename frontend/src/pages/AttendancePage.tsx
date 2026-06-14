@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, AttendanceCheckpointResponse, Employee } from "../lib/api";
+import { resolveWindowsCameraFallback } from "../lib/localCameraBridge";
 import {
   CameraDiagnosticsReport,
   DeviceOption,
@@ -72,6 +73,8 @@ export function AttendancePage() {
   const [serverCameraMode, setServerCameraMode] = useState(false);
   const [serverCameraProbe, setServerCameraProbe] = useState("");
   const [serverCameraError, setServerCameraError] = useState("");
+  const [serverCameraStreamUrl, setServerCameraStreamUrl] = useState("");
+  const [serverCameraSourceLabel, setServerCameraSourceLabel] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -80,10 +83,6 @@ export function AttendancePage() {
     const index = devices.findIndex((device) => device.deviceId === activeDeviceId);
     return index >= 0 ? index : 0;
   }, [activeDeviceId, devices]);
-  const serverCameraStreamUrl = useMemo(
-    () => `/api/v1/local-camera/stream?camera_index=${selectedCameraIndex}&width=640&height=480`,
-    [selectedCameraIndex]
-  );
 
   const availableEmployees = useMemo(
     () => (employeesData?.items || []).filter((employee) => (employee.status || "").trim() === "active"),
@@ -147,6 +146,8 @@ export function AttendancePage() {
         }
         setServerCameraMode(false);
         setServerCameraError("");
+        setServerCameraStreamUrl("");
+        setServerCameraSourceLabel("");
         return;
       }
 
@@ -158,6 +159,8 @@ export function AttendancePage() {
       setCameraDebugReport(null);
       setServerCameraProbe("");
       setServerCameraError("");
+      setServerCameraStreamUrl("");
+      setServerCameraSourceLabel("");
       try {
         const stream = await startCameraStream({
           activeDeviceId,
@@ -207,28 +210,19 @@ export function AttendancePage() {
         const isWindows = /win/i.test(navigator.platform || navigator.userAgent);
         if (isWindows) {
           setServerCameraMode(true);
-          setCameraError(`${message} Переключаюсь на локальный Windows fallback через OpenCV.`);
-          fetch(`/api/v1/local-camera/probe?camera_index=${selectedCameraIndex}&width=640&height=480`)
-            .then(async (response) => {
-              if (!response.ok) {
-                const detail = await response.text();
-                throw new Error(detail || `request_failed:${response.status}`);
-              }
-              return response.json();
-            })
-            .then((payload) => {
-              setServerCameraProbe(JSON.stringify(payload, null, 2));
-              if (!payload.ok) {
-                setServerCameraError("OpenCV fallback не смог открыть локальную камеру на стороне API.");
+          setCameraError(`${message} Переключаюсь на Windows fallback.`);
+          resolveWindowsCameraFallback(selectedCameraIndex)
+            .then((resolved) => {
+              setServerCameraProbe(resolved.probeText);
+              setServerCameraStreamUrl(resolved.streamUrl);
+              setServerCameraSourceLabel(resolved.sourceLabel);
+              if (!resolved.probe.ok) {
+                setServerCameraError(`${resolved.sourceLabel} не смог открыть локальную камеру.`);
               }
             })
             .catch((probeError) => {
               setServerCameraProbe("");
-              setServerCameraError(
-                probeError instanceof Error
-                  ? `OpenCV fallback недоступен. Скорее всего, backend API не перезапущен после обновления или маршрут /api/v1/local-camera/* не поднялся. Детали: ${probeError.message}`
-                  : "OpenCV fallback недоступен."
-              );
+              setServerCameraError(probeError instanceof Error ? probeError.message : "Windows fallback недоступен.");
             });
           return;
         }
@@ -365,7 +359,7 @@ export function AttendancePage() {
                 ref={imageRef}
                 src={serverCameraStreamUrl}
                 alt="Server local camera stream"
-                onError={() => setServerCameraError("Не удалось открыть поток /api/v1/local-camera/stream. Перезапусти backend API на Windows и обнови страницу.")}
+                onError={() => setServerCameraError(`${serverCameraSourceLabel || "Windows fallback"} не смог открыть поток камеры.`)}
               />
             ) : (
               <video ref={videoRef} muted playsInline />
@@ -380,7 +374,7 @@ export function AttendancePage() {
           )}
           {serverCameraProbe && (
             <details className="debug-panel">
-              <summary>Диагностика server camera fallback</summary>
+              <summary>Диагностика fallback: {serverCameraSourceLabel || "camera bridge"}</summary>
               <pre>{serverCameraProbe}</pre>
             </details>
           )}
