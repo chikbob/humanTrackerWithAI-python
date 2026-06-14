@@ -141,6 +141,26 @@ scripts/run_worker_py311.sh
 streamlit run app.py
 ```
 
+### 2a. Windows local-camera mode
+
+Для встроенной камеры Windows рекомендуемый режим теперь такой:
+
+1. запускать API локально на самой Windows-машине;
+2. открывать приложение по адресу `http://127.0.0.1:8000`;
+3. при ошибке браузерного `getUserMedia` интерфейс автоматически переключится на локальный OpenCV fallback.
+
+Быстрый запуск:
+
+```powershell
+scripts\start_windows_local_api.ps1
+```
+
+или
+
+```cmd
+scripts\start_windows_local_api.cmd
+```
+
 ### 3. Запуск фонового worker
 
 В отдельном терминале:
