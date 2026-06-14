@@ -1,8 +1,10 @@
 import unittest
+from unittest.mock import patch
 
 try:
     from ui.monitoring import (
         _build_source_bindings,
+        _build_camera_backend_options,
         _build_live_window_url,
         _max_rendered_sources,
         _resolve_default_selection,
@@ -10,6 +12,7 @@ try:
     )
 except ModuleNotFoundError:
     _build_source_bindings = None
+    _build_camera_backend_options = None
     _build_live_window_url = None
     _max_rendered_sources = None
     _resolve_default_selection = None
@@ -20,24 +23,31 @@ def _bindings():
     return [
         {"source_id": 10, "kind": "production", "name": "Камера 1", "label": "Камера 1 [rtsp]"},
         {"source_id": "browser-live", "kind": "browser_camera", "name": "Браузер оператора", "label": "Браузер оператора [browser_camera]"},
-        {"source_id": "local-macbook", "kind": "local_camera", "name": "Камера MacBook", "label": "Камера MacBook [local_camera]"},
+        {"source_id": "local-device", "kind": "local_camera", "name": "Локальная камера устройства", "label": "Локальная камера устройства [local_camera]"},
     ]
 
 
 @unittest.skipIf(_resolve_default_selection is None, "monitoring runtime dependencies are not installed")
 class MonitoringHelperTests(unittest.TestCase):
+    def test_windows_camera_backends_include_directshow_and_msmf(self):
+        with patch("ui.monitoring.platform.system", return_value="Windows"):
+            backend_keys = [key for key, _api, _label in _build_camera_backend_options()]
+        self.assertIn("dshow", backend_keys)
+        self.assertIn("msmf", backend_keys)
+        self.assertIn("any", backend_keys)
+
     def test_resolve_default_selection_by_source_id(self):
         self.assertEqual(_resolve_default_selection(_bindings(), "", "10"), ["Камера 1 [rtsp]"])
 
     def test_resolve_default_selection_prefers_browser_camera(self):
         self.assertEqual(_resolve_default_selection(_bindings(), "browser_camera", ""), ["Браузер оператора [browser_camera]"])
 
-    def test_resolve_default_selection_prefers_macbook_camera_without_explicit_hint(self):
-        self.assertEqual(_resolve_default_selection(_bindings(), "", ""), ["Камера MacBook [local_camera]"])
+    def test_resolve_default_selection_prefers_browser_operator_without_explicit_hint(self):
+        self.assertEqual(_resolve_default_selection(_bindings(), "", ""), ["Браузер оператора [browser_camera]"])
 
     def test_resolve_standalone_binding_by_kind(self):
         binding = _resolve_standalone_binding(_bindings(), preferred_source="", preferred_source_id="", preferred_source_kind="local_camera")
-        self.assertEqual(binding["label"], "Локальная камера MacBook")
+        self.assertEqual(binding["label"], "Локальная камера устройства [local_camera]")
 
     def test_build_source_bindings_maps_browser_camera_and_prioritizes_operator_browser(self):
         bindings = _build_source_bindings(
@@ -48,11 +58,12 @@ class MonitoringHelperTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(bindings[0]["name"], "Камера MacBook")
-        self.assertEqual(bindings[0]["kind"], "local_camera")
-        self.assertEqual(bindings[1]["name"], "Браузер оператора")
-        self.assertEqual(bindings[1]["kind"], "browser_camera")
-        self.assertEqual(bindings[2]["kind"], "production")
+        self.assertEqual(bindings[0]["name"], "Браузер оператора")
+        self.assertEqual(bindings[0]["kind"], "browser_camera")
+        self.assertEqual(bindings[1]["name"], "Камера 1")
+        self.assertEqual(bindings[1]["kind"], "production")
+        self.assertEqual(bindings[2]["name"], "Локальная камера устройства")
+        self.assertEqual(bindings[2]["kind"], "local_camera")
 
     def test_live_window_url_contains_stable_source_parameters(self):
         url = _build_live_window_url({"kind": "production", "source_id": 7})

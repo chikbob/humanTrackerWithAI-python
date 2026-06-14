@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import os
+import platform
 import sys
 import tempfile
 import time
@@ -43,11 +44,38 @@ except Exception:
 
 RTC_CONFIG = RTCConfiguration(build_rtc_configuration()) if WEBRTC_AVAILABLE and build_rtc_configuration() else None
 
-CAMERA_BACKEND_OPTIONS = [
-    ("auto", None, "Автовыбор"),
-    ("avfoundation", getattr(cv2, "CAP_AVFOUNDATION", None), "AVFoundation"),
-    ("any", getattr(cv2, "CAP_ANY", None), "CAP_ANY"),
-]
+def _build_camera_backend_options():
+    options = [("auto", None, "Автовыбор")]
+    system_name = platform.system().lower()
+
+    if system_name == "windows":
+        options.extend(
+            [
+                ("dshow", getattr(cv2, "CAP_DSHOW", None), "DirectShow"),
+                ("msmf", getattr(cv2, "CAP_MSMF", None), "Media Foundation"),
+                ("winrt", getattr(cv2, "CAP_WINRT", None), "Windows Runtime"),
+            ]
+        )
+    elif system_name == "darwin":
+        options.append(("avfoundation", getattr(cv2, "CAP_AVFOUNDATION", None), "AVFoundation"))
+    elif system_name == "linux":
+        options.extend(
+            [
+                ("v4l2", getattr(cv2, "CAP_V4L2", None), "Video4Linux2"),
+                ("gstreamer", getattr(cv2, "CAP_GSTREAMER", None), "GStreamer"),
+            ]
+        )
+
+    options.extend(
+        [
+            ("any", getattr(cv2, "CAP_ANY", None), "CAP_ANY"),
+            ("ffmpeg", getattr(cv2, "CAP_FFMPEG", None), "FFmpeg"),
+        ]
+    )
+    return options
+
+
+CAMERA_BACKEND_OPTIONS = _build_camera_backend_options()
 LOCAL_CAMERA_RESOLUTIONS = {
     "480p": (640, 480),
     "720p": (1280, 720),
@@ -82,6 +110,16 @@ def _available_camera_backends():
     return [(key, api, label) for key, api, label in CAMERA_BACKEND_OPTIONS if api is not None or key == "auto"]
 
 
+def _warmup_camera_capture(cap, *, attempts: int = 8, delay_sec: float = 0.12):
+    for attempt in range(attempts):
+        ret, frame = cap.read()
+        if ret and frame is not None:
+            return True, frame, attempt
+        if delay_sec > 0:
+            time.sleep(delay_sec)
+    return False, None, attempts
+
+
 def _open_camera_capture(camera_index: int, backend_key: str = "auto"):
     candidates = _available_camera_backends()
     if backend_key != "auto":
@@ -97,9 +135,14 @@ def _open_camera_capture(camera_index: int, backend_key: str = "auto"):
             cap.release()
             tried.append(f"{label}: open_failed")
             continue
-        ret, _ = cap.read()
+        ret, _frame, warmup_attempt = _warmup_camera_capture(cap)
         if ret:
-            return cap, {"backend_key": key, "backend_label": label, "attempts": tried}
+            return cap, {
+                "backend_key": key,
+                "backend_label": label,
+                "attempts": tried,
+                "warmup_attempt": warmup_attempt,
+            }
         cap.release()
         tried.append(f"{label}: no_frames")
     return None, {"backend_key": backend_key, "backend_label": "—", "attempts": tried}
@@ -112,14 +155,16 @@ def _probe_camera_backends(camera_index: int) -> list[dict]:
             cap = cv2.VideoCapture(int(camera_index)) if api is None else cv2.VideoCapture(int(camera_index), api)
             opened = cap.isOpened()
             got_frame = False
+            warmup_attempt = None
             if opened:
-                got_frame, _ = cap.read()
+                got_frame, _frame, warmup_attempt = _warmup_camera_capture(cap, attempts=5, delay_sec=0.08)
             cap.release()
             rows.append(
                 {
                     "backend": label,
                     "opened": "да" if opened else "нет",
                     "frame": "да" if got_frame else "нет",
+                    "warmup_attempt": "—" if warmup_attempt is None else int(warmup_attempt),
                     "status": "ok" if opened and got_frame else "failed",
                 }
             )
@@ -139,6 +184,9 @@ def _apply_camera_preferences(cap, *, resolution_label: str):
     width, height = LOCAL_CAMERA_RESOLUTIONS.get(resolution_label, LOCAL_CAMERA_RESOLUTIONS["720p"])
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    if platform.system().lower() == "windows":
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
 
 def _read_camera_frame(cap, *, max_retries: int = 3):
@@ -184,7 +232,7 @@ def _resolve_source_name(binding: dict, selected_source) -> str:
     if binding["kind"] == "production" and selected_source is not None:
         return selected_source["name"]
     if binding["kind"] == "local_camera":
-        return "Встроенная камера MacBook"
+        return "Локальная камера устройства"
     return "Браузерная камера"
 
 
@@ -717,13 +765,13 @@ def _build_source_bindings(active_sources: list[dict], statuses_by_id: dict) -> 
         )
     bindings.append(
         {
-            "source_id": "local-macbook",
+            "source_id": "local-device",
             "kind": "local_camera",
             "kind_label": "local_camera",
             "source": None,
             "status": {},
-            "name": "Камера MacBook",
-            "label": "Камера MacBook [local_camera]",
+            "name": "Локальная камера устройства",
+            "label": "Локальная камера устройства [local_camera]",
         }
     )
     bindings.sort(key=_monitoring_binding_priority)
@@ -1372,10 +1420,10 @@ def _render_local_camera_monitor(
     fullscreen_object_fit: str = "cover",
     status_panel_callback=None,
 ):
-    """Continuous local-device monitoring for MacBook internal camera and other local webcams."""
+    """Continuous local-device monitoring for the built-in camera and local webcams."""
     if _is_remote_host_session(st):
         st.error(
-            "Режим «Локальная камера MacBook» доступен только при локальном запуске UI на той же машине, "
+            "Режим локальной камеры доступен только при локальном запуске UI на той же машине, "
             "где физически подключена камера."
         )
         st.info(
@@ -1449,7 +1497,7 @@ def _render_local_camera_monitor(
             )
 
     if not session_state.local_camera_running:
-        st.info("Активируйте камеру MacBook, когда нужно возобновить live-мониторинг. Уже накопленные события и графики сохраняются.")
+        st.info("Активируйте локальную камеру, когда нужно возобновить live-мониторинг. Уже накопленные события и графики сохраняются.")
         return session_state.get("local_camera_last_frame_at")
 
     cap, backend_meta = _open_camera_capture(int(camera_index), backend_key=backend_key)
@@ -1802,9 +1850,10 @@ def _render_demo_workspace(
         if stop_button:
             session_state.fallback_camera_running = False
         if session_state.fallback_camera_running:
-            cap = cv2.VideoCapture(camera_index)
-            if not cap.isOpened():
-                st.error("Не удалось открыть локальную камеру.")
+            cap, backend_meta = _open_camera_capture(int(camera_index), backend_key="auto")
+            if cap is None:
+                attempt_text = ", ".join(backend_meta.get("attempts") or []) or "нет подробностей"
+                st.error(f"Не удалось открыть локальную камеру. Попытки: {attempt_text}")
                 session_state.fallback_camera_running = False
                 return
             start_session(
