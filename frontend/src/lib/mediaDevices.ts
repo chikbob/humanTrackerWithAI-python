@@ -178,6 +178,7 @@ export async function listVideoInputDevices(options: ListDevicesOptions = {}): P
 
 function buildCameraAttempts({ activeDeviceId, preferredWidth = 1280, preferredHeight = 720 }: StartCameraOptions): MediaStreamConstraints[] {
   const attempts: MediaStreamConstraints[] = [];
+  const windowsClient = isWindowsClient();
   const ultraLowResolutionConstraints = {
     width: { ideal: 320, max: 640 },
     height: { ideal: 240, max: 480 },
@@ -193,6 +194,54 @@ function buildCameraAttempts({ activeDeviceId, preferredWidth = 1280, preferredH
     height: { ideal: preferredHeight },
     frameRate: { ideal: 24, max: 30 }
   };
+
+  if (windowsClient) {
+    attempts.push({
+      video: true,
+      audio: false
+    });
+    attempts.push({
+      video: ultraLowResolutionConstraints,
+      audio: false
+    });
+    attempts.push({
+      video: lowResolutionConstraints,
+      audio: false
+    });
+    if (activeDeviceId && activeDeviceId !== "default") {
+      attempts.push({
+        video: {
+          deviceId: { exact: activeDeviceId }
+        },
+        audio: false
+      });
+      attempts.push({
+        video: {
+          deviceId: { ideal: activeDeviceId }
+        },
+        audio: false
+      });
+      attempts.push({
+        video: {
+          deviceId: { exact: activeDeviceId },
+          ...ultraLowResolutionConstraints
+        },
+        audio: false
+      });
+      attempts.push({
+        video: {
+          deviceId: { exact: activeDeviceId },
+          ...lowResolutionConstraints
+        },
+        audio: false
+      });
+    }
+    attempts.push({
+      video: sizedConstraints,
+      audio: false
+    });
+    return attempts;
+  }
 
   if (activeDeviceId && activeDeviceId !== "default") {
     attempts.push({
