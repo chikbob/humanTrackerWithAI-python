@@ -3,6 +3,12 @@ export type DeviceOption = {
   label: string;
 };
 
+type StartCameraOptions = {
+  activeDeviceId?: string;
+  preferredWidth?: number;
+  preferredHeight?: number;
+};
+
 function normalizeCameraLabel(label: string, index: number) {
   const normalized = label.trim();
   return normalized || `Видеоустройство ${index + 1}`;
@@ -33,4 +39,88 @@ export async function listVideoInputDevices(): Promise<DeviceOption[]> {
       deviceId: item.deviceId,
       label: normalizeCameraLabel(item.label, index)
     }));
+}
+
+function buildCameraAttempts({ activeDeviceId, preferredWidth = 1280, preferredHeight = 720 }: StartCameraOptions): MediaStreamConstraints[] {
+  const attempts: MediaStreamConstraints[] = [];
+  const sizedConstraints = {
+    width: { ideal: preferredWidth },
+    height: { ideal: preferredHeight }
+  };
+
+  if (activeDeviceId && activeDeviceId !== "default") {
+    attempts.push({
+      video: {
+        deviceId: { ideal: activeDeviceId },
+        ...sizedConstraints
+      },
+      audio: false
+    });
+    attempts.push({
+      video: {
+        deviceId: { ideal: activeDeviceId }
+      },
+      audio: false
+    });
+  }
+
+  attempts.push({
+    video: sizedConstraints,
+    audio: false
+  });
+  attempts.push({
+    video: true,
+    audio: false
+  });
+
+  return attempts;
+}
+
+function canRetryCameraStart(error: unknown) {
+  if (!(error instanceof DOMException)) {
+    return false;
+  }
+
+  return ["NotReadableError", "OverconstrainedError", "AbortError"].includes(error.name);
+}
+
+export function getCameraStartErrorMessage(error: unknown) {
+  if (error instanceof DOMException) {
+    if (error.name === "NotAllowedError") {
+      return "Браузер не получил доступ к камере. Проверьте разрешение на использование камеры для этого сайта.";
+    }
+    if (error.name === "NotFoundError") {
+      return "Камера не найдена. Проверьте, что устройство подключено и доступно в системе.";
+    }
+    if (error.name === "NotReadableError") {
+      return "Не удалось запустить видеопоток. На Windows это обычно означает, что камера занята другим приложением или драйвер не принимает текущий режим.";
+    }
+    if (error.name === "OverconstrainedError") {
+      return "Браузер не смог подобрать совместимые параметры камеры. Поток будет запущен только после выбора другого устройства или режима.";
+    }
+  }
+
+  return "Не удалось запустить камеру.";
+}
+
+export async function startCameraStream(options: StartCameraOptions): Promise<MediaStream> {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("Браузер не поддерживает доступ к камере.");
+  }
+
+  const attempts = buildCameraAttempts(options);
+  let lastError: unknown = null;
+
+  for (const constraints of attempts) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (error) {
+      lastError = error;
+      if (!canRetryCameraStart(error)) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError ?? new Error("Не удалось запустить камеру.");
 }

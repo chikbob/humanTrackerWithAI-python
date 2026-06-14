@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiClient, FrameAnalysisResponse } from "../lib/api";
-import { DeviceOption, listVideoInputDevices } from "../lib/mediaDevices";
+import {
+  DeviceOption,
+  getCameraStartErrorMessage,
+  listVideoInputDevices,
+  startCameraStream
+} from "../lib/mediaDevices";
 
 function captureFrame(video: HTMLVideoElement | null): string | null {
   if (!video || !video.videoWidth || !video.videoHeight) return null;
@@ -52,6 +57,7 @@ export function MonitoringPage() {
   const [isAnalysisEnabled, setIsAnalysisEnabled] = useState(false);
   const [activeModel, setActiveModel] = useState("yolov8s.pt");
   const [lastAnalysis, setLastAnalysis] = useState<FrameAnalysisResponse | null>(null);
+  const [cameraError, setCameraError] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const analysisLockRef = useRef(false);
@@ -71,33 +77,43 @@ export function MonitoringPage() {
 
   useEffect(() => {
     async function startCamera() {
-      if (!isCameraEnabled || !navigator.mediaDevices?.getUserMedia) return;
+      if (!isCameraEnabled) return;
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: activeDeviceId && activeDeviceId !== "default"
-          ? { deviceId: { ideal: activeDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-          : { width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false
-      });
-      streamRef.current = stream;
-      const [videoTrack] = stream.getVideoTracks();
-      const resolvedDeviceId = videoTrack?.getSettings().deviceId || activeDeviceId;
-      const resolvedLabel = videoTrack?.label || "Камера устройства";
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      const cameras = await syncDevices(resolvedDeviceId, setDevices, setActiveDeviceId, resolvedLabel);
-      if (!cameras.length && resolvedDeviceId) {
-        setActiveDeviceId(resolvedDeviceId);
+      setCameraError("");
+      try {
+        const stream = await startCameraStream({ activeDeviceId });
+        streamRef.current = stream;
+        const [videoTrack] = stream.getVideoTracks();
+        const resolvedDeviceId = videoTrack?.getSettings().deviceId || activeDeviceId;
+        const resolvedLabel = videoTrack?.label || "Камера устройства";
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        const cameras = await syncDevices(resolvedDeviceId, setDevices, setActiveDeviceId, resolvedLabel);
+        if (!cameras.length && resolvedDeviceId) {
+          setActiveDeviceId(resolvedDeviceId);
+        }
+      } catch (error) {
+        setCameraError(getCameraStartErrorMessage(error));
+        setIsAnalysisEnabled(false);
+        if (videoRef.current) {
+          videoRef.current.srcObject = null;
+        }
+        throw error;
       }
     }
 
-    void startCamera();
+    startCamera().catch(() => {
+      // Error is already converted to a user-facing message in state.
+    });
     return () => {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
     };
   }, [activeDeviceId, isCameraEnabled]);
 
@@ -182,6 +198,7 @@ export function MonitoringPage() {
           <div className="video-frame">
             <video ref={videoRef} muted playsInline />
           </div>
+          {cameraError && <div className="inline-warning">{cameraError}</div>}
           {analyzeMutation.error instanceof Error && <div className="inline-warning">{analyzeMutation.error.message}</div>}
         </section>
 
