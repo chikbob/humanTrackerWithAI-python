@@ -46,6 +46,7 @@ type StartCameraOptions = {
   activeDeviceId?: string;
   preferredWidth?: number;
   preferredHeight?: number;
+  allowAlternateDevices?: boolean;
   onDebugReport?: (report: CameraDiagnosticsReport) => void;
 };
 
@@ -177,6 +178,11 @@ export async function listVideoInputDevices(options: ListDevicesOptions = {}): P
 
 function buildCameraAttempts({ activeDeviceId, preferredWidth = 1280, preferredHeight = 720 }: StartCameraOptions): MediaStreamConstraints[] {
   const attempts: MediaStreamConstraints[] = [];
+  const ultraLowResolutionConstraints = {
+    width: { ideal: 320, max: 640 },
+    height: { ideal: 240, max: 480 },
+    frameRate: { ideal: 15, max: 20 }
+  };
   const lowResolutionConstraints = {
     width: { ideal: 640 },
     height: { ideal: 480 },
@@ -189,6 +195,13 @@ function buildCameraAttempts({ activeDeviceId, preferredWidth = 1280, preferredH
   };
 
   if (activeDeviceId && activeDeviceId !== "default") {
+    attempts.push({
+      video: {
+        deviceId: { exact: activeDeviceId },
+        ...ultraLowResolutionConstraints
+      },
+      audio: false
+    });
     attempts.push({
       video: {
         deviceId: { exact: activeDeviceId },
@@ -211,6 +224,10 @@ function buildCameraAttempts({ activeDeviceId, preferredWidth = 1280, preferredH
     });
   }
 
+  attempts.push({
+    video: ultraLowResolutionConstraints,
+    audio: false
+  });
   attempts.push({
     video: lowResolutionConstraints,
     audio: false
@@ -286,7 +303,7 @@ export async function startCameraStream(options: StartCameraOptions): Promise<Me
   const devicesBefore = await collectVideoDevices();
   const attempts = [
     ...buildCameraAttempts(options),
-    ...buildAlternateDeviceAttempts(devicesBefore, options.activeDeviceId || "")
+    ...(options.allowAlternateDevices ? buildAlternateDeviceAttempts(devicesBefore, options.activeDeviceId || "") : [])
   ];
   let lastError: unknown = null;
   const report: CameraDiagnosticsReport = {

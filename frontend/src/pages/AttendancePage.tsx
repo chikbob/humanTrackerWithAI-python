@@ -22,6 +22,17 @@ function captureFrame(video: HTMLVideoElement | null): string | null {
   return canvas.toDataURL("image/jpeg", 0.84);
 }
 
+async function waitForVideoFrame(video: HTMLVideoElement) {
+  const startedAt = performance.now();
+  while (performance.now() - startedAt < 2500) {
+    if (video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      return true;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 120));
+  }
+  return false;
+}
+
 function formatTimestamp(value?: number | null) {
   if (!value) return "—";
   return new Date(value * 1000).toLocaleString("ru-RU");
@@ -132,6 +143,7 @@ export function AttendancePage() {
       try {
         const stream = await startCameraStream({
           activeDeviceId,
+          allowAlternateDevices: false,
           onDebugReport: setCameraDebugReport
         });
         if (cameraStartRequestRef.current !== requestId) {
@@ -146,6 +158,13 @@ export function AttendancePage() {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
+          const hasFrame = await waitForVideoFrame(videoRef.current);
+          if (!hasFrame) {
+            stopCameraStream(stream);
+            streamRef.current = null;
+            setCameraError("Камера открылась, но браузер не получил ни одного видеокадра. Для встроенной камеры Windows это обычно означает сбой драйвера или пустой поток устройства.");
+            return;
+          }
         }
         const cameras = await syncVideoInputDevices(resolvedDeviceId, setDevices, setActiveDeviceId, {
           fallbackLabel: resolvedLabel,
