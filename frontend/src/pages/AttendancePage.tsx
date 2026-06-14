@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, AttendanceCheckpointResponse, Employee } from "../lib/api";
-import { isWindowsClientBrowser, resolveWindowsCameraFallback } from "../lib/localCameraBridge";
+import { isWindowsClientBrowser, resolveWindowsCameraFallback, shouldPreferWindowsLocalCameraFallback } from "../lib/localCameraBridge";
 import {
   CameraDiagnosticsReport,
   DeviceOption,
@@ -84,8 +84,10 @@ export function AttendancePage() {
     return index >= 0 ? index : 0;
   }, [activeDeviceId, devices]);
 
-  async function activateWindowsFallback(requestId: number, message: string) {
-    setCameraError(`${message} Переключаюсь на Windows fallback.`);
+  async function activateWindowsFallback(requestId: number, message: string, options: { preemptive?: boolean } = {}) {
+    if (message) {
+      setCameraError(options.preemptive ? message : `${message} Переключаюсь на Windows fallback.`);
+    }
     setServerCameraMode(false);
     setServerCameraStreamUrl("");
     setServerCameraSourceLabel("");
@@ -94,7 +96,7 @@ export function AttendancePage() {
     try {
       const resolved = await resolveWindowsCameraFallback(selectedCameraIndex);
       if (cameraStartRequestRef.current !== requestId) {
-        return;
+        return false;
       }
       setServerCameraProbe(resolved.probeText);
       setServerCameraStreamUrl(resolved.streamUrl);
@@ -103,13 +105,15 @@ export function AttendancePage() {
       if (!resolved.probe.ok) {
         setServerCameraError(`${resolved.sourceLabel} не смог открыть локальную камеру.`);
       }
+      return Boolean(resolved.probe.ok);
     } catch (probeError) {
       if (cameraStartRequestRef.current !== requestId) {
-        return;
+        return false;
       }
       setServerCameraMode(false);
       setServerCameraProbe("");
       setServerCameraError(probeError instanceof Error ? probeError.message : "Windows fallback недоступен.");
+      return false;
     }
   }
 
@@ -190,6 +194,12 @@ export function AttendancePage() {
       setServerCameraError("");
       setServerCameraStreamUrl("");
       setServerCameraSourceLabel("");
+      if (shouldPreferWindowsLocalCameraFallback()) {
+        const fallbackStarted = await activateWindowsFallback(requestId, "На Windows используется локальный режим камеры.", { preemptive: true });
+        if (fallbackStarted) {
+          return;
+        }
+      }
       try {
         const stream = await startCameraStream({
           activeDeviceId,
