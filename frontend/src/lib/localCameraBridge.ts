@@ -14,7 +14,22 @@ export type CameraBridgeResolved = {
   streamUrl: string;
 };
 
+type DesktopCompanionStatus = {
+  session_id: string;
+  connected: boolean;
+  has_frame: boolean;
+  updated_at?: number | null;
+  age_ms?: number;
+  camera_index?: number;
+  width?: number;
+  height?: number;
+  source_label?: string;
+  backend_label?: string;
+  host_name?: string;
+};
+
 const LOCALHOST_BRIDGE_ORIGIN = "http://127.0.0.1:8123";
+const DESKTOP_COMPANION_SESSION_STORAGE_KEY = "desktop-companion-session-id";
 
 export function isWindowsClientBrowser() {
   const navigatorWithUserAgentData = navigator as Navigator & { userAgentData?: { platform?: string } };
@@ -31,6 +46,23 @@ export function shouldPreferWindowsLocalCameraFallback() {
   return isWindowsClientBrowser() && isLocalPageOrigin();
 }
 
+function createDesktopCompanionSessionId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `desk-${crypto.randomUUID().slice(0, 8)}`;
+  }
+  return `desk-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function getDesktopCompanionSessionId() {
+  const stored = window.localStorage.getItem(DESKTOP_COMPANION_SESSION_STORAGE_KEY);
+  if (stored && stored.trim()) {
+    return stored;
+  }
+  const generated = createDesktopCompanionSessionId();
+  window.localStorage.setItem(DESKTOP_COMPANION_SESSION_STORAGE_KEY, generated);
+  return generated;
+}
+
 async function fetchProbe(url: string): Promise<CameraBridgeProbe> {
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
@@ -38,6 +70,15 @@ async function fetchProbe(url: string): Promise<CameraBridgeProbe> {
     throw new Error(detail || `request_failed:${response.status}`);
   }
   return response.json() as Promise<CameraBridgeProbe>;
+}
+
+async function fetchDesktopCompanionStatus(sessionId: string): Promise<DesktopCompanionStatus> {
+  const response = await fetch(`/api/v1/desktop-companion/status?session_id=${encodeURIComponent(sessionId)}`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `request_failed:${response.status}`);
+  }
+  return response.json() as Promise<DesktopCompanionStatus>;
 }
 
 function buildCameraIndexCandidates(preferredIndex: number) {
@@ -96,8 +137,33 @@ export async function resolveWindowsCameraFallback(cameraIndex: number) {
   }
 
   if (window.isSecureContext) {
+    const sessionId = getDesktopCompanionSessionId();
+    try {
+      const status = await fetchDesktopCompanionStatus(sessionId);
+      if (status.connected && status.has_frame) {
+        return {
+          probe: {
+            camera_index: status.camera_index ?? cameraIndex,
+            width: status.width ?? 640,
+            height: status.height ?? 480,
+            ok: true,
+            backend: status.backend_label,
+            attempts: []
+          },
+          probeText: JSON.stringify(status, null, 2),
+          sourceLabel: status.source_label || "Windows desktop companion",
+          streamUrl: `/api/v1/desktop-companion/stream?session_id=${encodeURIComponent(sessionId)}`
+        } satisfies CameraBridgeResolved;
+      }
+    } catch (statusError) {
+      throw new Error(
+        `Windows desktop companion unavailable: ${
+          statusError instanceof Error ? statusError.message : String(statusError)
+        }. Session ID: ${sessionId}. Start scripts\\start_windows_remote_companion.ps1 -ServerUrl ${window.location.origin} -SessionId ${sessionId}`
+      );
+    }
     throw new Error(
-      "Удаленная HTTPS-страница не может открыть локальный Windows HTTP camera bridge. Запустите проект на Windows через scripts\\start_windows_local_api.ps1 и откройте http://127.0.0.1:8000."
+      `Windows desktop companion is not connected. Session ID: ${sessionId}. Start scripts\\start_windows_remote_companion.ps1 -ServerUrl ${window.location.origin} -SessionId ${sessionId}`
     );
   }
 

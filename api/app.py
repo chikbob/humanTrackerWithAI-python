@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import base64
 import time
 from typing import Any
 
@@ -39,6 +40,7 @@ from db.repository import (
 from services.system_api import build_incident_summary, load_dashboard_summary
 from services.telemetry import build_health_payload, build_operational_summary, build_prometheus_metrics, build_worker_runtime_metrics
 from services.local_camera import encode_frame_as_jpeg, open_local_camera, read_local_camera_frame
+from services.desktop_companion import get_desktop_companion_frame, get_desktop_companion_status, store_desktop_companion_frame
 from services.vision_runtime import analyze_frame, list_available_models, save_snapshot
 
 
@@ -127,6 +129,17 @@ class AttendanceCheckpointPayload(ActorPayload):
     confidence_threshold: float | None = Field(default=None, ge=0.01, le=0.99)
     inference_size: int | None = Field(default=None, ge=320, le=1280)
     note: str = ""
+
+
+class DesktopCompanionFramePayload(BaseModel):
+    session_id: str = Field(min_length=6, max_length=128)
+    camera_index: int = Field(default=0, ge=0, le=10)
+    width: int = Field(ge=1, le=4096)
+    height: int = Field(ge=1, le=4096)
+    source_label: str = "Windows desktop companion"
+    backend_label: str = ""
+    host_name: str = ""
+    frame_base64: str = Field(min_length=32)
 
 
 FRONTEND_DIST_DIR = Path(__file__).resolve().parents[1] / "frontend" / "dist"
@@ -325,6 +338,52 @@ def create_app() -> FastAPI:
                     )
             finally:
                 cap.release()
+
+        return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+    @app.post("/api/v1/desktop-companion/frame")
+    def post_desktop_companion_frame(payload: DesktopCompanionFramePayload):
+        try:
+            frame_bytes = base64.b64decode(payload.frame_base64, validate=True)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="invalid_frame_base64") from exc
+        if not frame_bytes:
+            raise HTTPException(status_code=400, detail="empty_frame_payload")
+        session = store_desktop_companion_frame(
+            session_id=payload.session_id,
+            frame_bytes=frame_bytes,
+            camera_index=payload.camera_index,
+            width=payload.width,
+            height=payload.height,
+            source_label=payload.source_label,
+            backend_label=payload.backend_label,
+            host_name=payload.host_name,
+        )
+        return {"ok": True, "session": session}
+
+    @app.get("/api/v1/desktop-companion/status")
+    def get_desktop_companion_status_route(session_id: str = Query(..., min_length=6, max_length=128)):
+        return get_desktop_companion_status(session_id)
+
+    @app.get("/api/v1/desktop-companion/frame")
+    def get_desktop_companion_frame_route(session_id: str = Query(..., min_length=6, max_length=128)):
+        frame_bytes = get_desktop_companion_frame(session_id)
+        if frame_bytes is None:
+            raise HTTPException(status_code=404, detail="desktop_companion_frame_not_found")
+        return Response(content=frame_bytes, media_type="image/jpeg")
+
+    @app.get("/api/v1/desktop-companion/stream")
+    def get_desktop_companion_stream_route(session_id: str = Query(..., min_length=6, max_length=128)):
+        def generate():
+            while True:
+                frame_bytes = get_desktop_companion_frame(session_id)
+                if frame_bytes is None:
+                    message = b"desktop_companion_frame_not_found"
+                    yield b"--frame\r\nContent-Type: text/plain\r\n\r\n" + message + b"\r\n"
+                    time.sleep(0.4)
+                    continue
+                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
+                time.sleep(0.25)
 
         return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
 
