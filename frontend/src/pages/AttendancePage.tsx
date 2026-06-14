@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, AttendanceCheckpointResponse, Employee } from "../lib/api";
-import { DeviceOption, listVideoInputDevices } from "../lib/mediaDevices";
+import {
+  DeviceOption,
+  getCameraStartErrorMessage,
+  startCameraStream,
+  syncVideoInputDevices
+} from "../lib/mediaDevices";
 
 function captureFrame(video: HTMLVideoElement | null): string | null {
   if (!video || !video.videoWidth || !video.videoHeight) return null;
@@ -28,34 +33,6 @@ function buildEmployeeLabel(employee: Employee) {
   return parts.join(" · ");
 }
 
-async function syncDevices(
-  activeDeviceId: string,
-  setDevices: (devices: DeviceOption[]) => void,
-  setActiveDeviceId: (deviceId: string) => void,
-  fallbackLabel?: string
-) {
-  const cameras = await listVideoInputDevices();
-  if (cameras.length > 0) {
-    setDevices(cameras);
-    if (!activeDeviceId || cameras.every((camera) => camera.deviceId !== activeDeviceId)) {
-      setActiveDeviceId(cameras[0].deviceId);
-    }
-    return cameras;
-  }
-
-  if (fallbackLabel) {
-    const fallbackDevice = { deviceId: "default", label: fallbackLabel };
-    setDevices([fallbackDevice]);
-    if (!activeDeviceId) {
-      setActiveDeviceId(fallbackDevice.deviceId);
-    }
-    return [fallbackDevice];
-  }
-
-  setDevices([]);
-  return [];
-}
-
 export function AttendancePage() {
   const queryClient = useQueryClient();
   const { data: employeesData } = useQuery({ queryKey: ["employees"], queryFn: apiClient.employees, refetchInterval: 20_000 });
@@ -74,8 +51,10 @@ export function AttendancePage() {
   const [selectedModelName, setSelectedModelName] = useState("yolov8s.pt");
   const [search, setSearch] = useState("");
   const [lastResult, setLastResult] = useState<AttendanceCheckpointResponse | null>(null);
+  const [cameraError, setCameraError] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cameraStartRequestRef = useRef(0);
 
   const availableEmployees = useMemo(
     () => (employeesData?.items || []).filter((employee) => (employee.status || "").trim() === "active"),
@@ -114,43 +93,72 @@ export function AttendancePage() {
 
   useEffect(() => {
     async function readDevices() {
-      await syncDevices(activeDeviceId, setDevices, setActiveDeviceId);
+      await syncVideoInputDevices(activeDeviceId, setDevices, setActiveDeviceId, {
+        skipPermissionProbe: cameraEnabled || Boolean(streamRef.current)
+      });
     }
 
     void readDevices();
     navigator.mediaDevices?.addEventListener?.("devicechange", readDevices);
     return () => navigator.mediaDevices?.removeEventListener?.("devicechange", readDevices);
-  }, [activeDeviceId]);
+  }, [activeDeviceId, cameraEnabled]);
 
   useEffect(() => {
     async function startCamera() {
-      if (!cameraEnabled || !navigator.mediaDevices?.getUserMedia) return;
+      if (!cameraEnabled) {
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        if (videoRef.current) {
+          videoRef.current.srcObject = null;
+        }
+        return;
+      }
+
+      const requestId = cameraStartRequestRef.current + 1;
+      cameraStartRequestRef.current = requestId;
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: activeDeviceId && activeDeviceId !== "default"
-          ? { deviceId: { ideal: activeDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-          : { width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: false
-      });
-      streamRef.current = stream;
-      const [videoTrack] = stream.getVideoTracks();
-      const resolvedDeviceId = videoTrack?.getSettings().deviceId || activeDeviceId;
-      const resolvedLabel = videoTrack?.label || "Камера устройства";
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      const cameras = await syncDevices(resolvedDeviceId, setDevices, setActiveDeviceId, resolvedLabel);
-      if (!cameras.length && resolvedDeviceId) {
-        setActiveDeviceId(resolvedDeviceId);
+      setCameraError("");
+      try {
+        const stream = await startCameraStream({ activeDeviceId });
+        if (cameraStartRequestRef.current !== requestId) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+        const [videoTrack] = stream.getVideoTracks();
+        const resolvedDeviceId = videoTrack?.getSettings().deviceId || activeDeviceId;
+        const resolvedLabel = videoTrack?.label || "Камера устройства";
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        const cameras = await syncVideoInputDevices(resolvedDeviceId, setDevices, setActiveDeviceId, {
+          fallbackLabel: resolvedLabel,
+          skipPermissionProbe: true
+        });
+        if (cameraStartRequestRef.current !== requestId) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        if (!cameras.length && resolvedDeviceId && resolvedDeviceId !== activeDeviceId) {
+          setActiveDeviceId(resolvedDeviceId);
+        }
+      } catch (error) {
+        if (cameraStartRequestRef.current !== requestId) {
+          return;
+        }
+        setCameraError(getCameraStartErrorMessage(error));
+        if (videoRef.current) {
+          videoRef.current.srcObject = null;
+        }
       }
     }
 
     void startCamera();
     return () => {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
+      cameraStartRequestRef.current += 1;
     };
   }, [activeDeviceId, cameraEnabled]);
 
@@ -271,6 +279,9 @@ export function AttendancePage() {
             <video ref={videoRef} muted playsInline />
           </div>
 
+          {cameraError && (
+            <div className="inline-warning">{cameraError}</div>
+          )}
           {checkpointMutation.error instanceof Error && (
             <div className="inline-warning">{checkpointMutation.error.message}</div>
           )}

@@ -4,8 +4,8 @@ import { apiClient, FrameAnalysisResponse } from "../lib/api";
 import {
   DeviceOption,
   getCameraStartErrorMessage,
-  listVideoInputDevices,
-  startCameraStream
+  startCameraStream,
+  syncVideoInputDevices
 } from "../lib/mediaDevices";
 
 function captureFrame(video: HTMLVideoElement | null): string | null {
@@ -17,34 +17,6 @@ function captureFrame(video: HTMLVideoElement | null): string | null {
   if (!context) return null;
   context.drawImage(video, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL("image/jpeg", 0.82);
-}
-
-async function syncDevices(
-  activeDeviceId: string,
-  setDevices: (devices: DeviceOption[]) => void,
-  setActiveDeviceId: (deviceId: string) => void,
-  fallbackLabel?: string
-) {
-  const cameras = await listVideoInputDevices();
-  if (cameras.length > 0) {
-    setDevices(cameras);
-    if (!activeDeviceId || cameras.every((camera) => camera.deviceId !== activeDeviceId)) {
-      setActiveDeviceId(cameras[0].deviceId);
-    }
-    return cameras;
-  }
-
-  if (fallbackLabel) {
-    const fallbackDevice = { deviceId: "default", label: fallbackLabel };
-    setDevices([fallbackDevice]);
-    if (!activeDeviceId) {
-      setActiveDeviceId(fallbackDevice.deviceId);
-    }
-    return [fallbackDevice];
-  }
-
-  setDevices([]);
-  return [];
 }
 
 export function MonitoringPage() {
@@ -61,28 +33,46 @@ export function MonitoringPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const analysisLockRef = useRef(false);
+  const cameraStartRequestRef = useRef(0);
 
   const browserSources = useMemo(() => (sources?.items || []).filter((item) => item.source_type === "browser_camera"), [sources]);
   const serverSources = useMemo(() => (sources?.items || []).filter((item) => item.source_type !== "browser_camera"), [sources]);
 
   useEffect(() => {
     async function readDevices() {
-      await syncDevices(activeDeviceId, setDevices, setActiveDeviceId);
+      await syncVideoInputDevices(activeDeviceId, setDevices, setActiveDeviceId, {
+        skipPermissionProbe: isCameraEnabled || Boolean(streamRef.current)
+      });
     }
 
     void readDevices();
     navigator.mediaDevices?.addEventListener?.("devicechange", readDevices);
     return () => navigator.mediaDevices?.removeEventListener?.("devicechange", readDevices);
-  }, [activeDeviceId]);
+  }, [activeDeviceId, isCameraEnabled]);
 
   useEffect(() => {
     async function startCamera() {
-      if (!isCameraEnabled) return;
+      if (!isCameraEnabled) {
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        if (videoRef.current) {
+          videoRef.current.srcObject = null;
+        }
+        return;
+      }
+
+      const requestId = cameraStartRequestRef.current + 1;
+      cameraStartRequestRef.current = requestId;
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
       setCameraError("");
       try {
         const stream = await startCameraStream({ activeDeviceId });
+        if (cameraStartRequestRef.current !== requestId) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
         streamRef.current = stream;
         const [videoTrack] = stream.getVideoTracks();
         const resolvedDeviceId = videoTrack?.getSettings().deviceId || activeDeviceId;
@@ -91,29 +81,32 @@ export function MonitoringPage() {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
         }
-        const cameras = await syncDevices(resolvedDeviceId, setDevices, setActiveDeviceId, resolvedLabel);
-        if (!cameras.length && resolvedDeviceId) {
+        const cameras = await syncVideoInputDevices(resolvedDeviceId, setDevices, setActiveDeviceId, {
+          fallbackLabel: resolvedLabel,
+          skipPermissionProbe: true
+        });
+        if (cameraStartRequestRef.current !== requestId) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        if (!cameras.length && resolvedDeviceId && resolvedDeviceId !== activeDeviceId) {
           setActiveDeviceId(resolvedDeviceId);
         }
       } catch (error) {
+        if (cameraStartRequestRef.current !== requestId) {
+          return;
+        }
         setCameraError(getCameraStartErrorMessage(error));
         setIsAnalysisEnabled(false);
         if (videoRef.current) {
           videoRef.current.srcObject = null;
         }
-        throw error;
       }
     }
 
-    startCamera().catch(() => {
-      // Error is already converted to a user-facing message in state.
-    });
+    void startCamera();
     return () => {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
+      cameraStartRequestRef.current += 1;
     };
   }, [activeDeviceId, isCameraEnabled]);
 

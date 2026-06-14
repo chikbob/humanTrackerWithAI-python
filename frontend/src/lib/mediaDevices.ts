@@ -9,12 +9,16 @@ type StartCameraOptions = {
   preferredHeight?: number;
 };
 
+type ListDevicesOptions = {
+  skipPermissionProbe?: boolean;
+};
+
 function normalizeCameraLabel(label: string, index: number) {
   const normalized = label.trim();
   return normalized || `Видеоустройство ${index + 1}`;
 }
 
-export async function listVideoInputDevices(): Promise<DeviceOption[]> {
+export async function listVideoInputDevices(options: ListDevicesOptions = {}): Promise<DeviceOption[]> {
   if (!navigator.mediaDevices?.enumerateDevices) {
     return [];
   }
@@ -23,7 +27,7 @@ export async function listVideoInputDevices(): Promise<DeviceOption[]> {
   try {
     const initialDevices = await navigator.mediaDevices.enumerateDevices();
     const hasHiddenLabels = initialDevices.some((item) => item.kind === "videoinput" && !item.label.trim());
-    if (hasHiddenLabels && navigator.mediaDevices.getUserMedia) {
+    if (hasHiddenLabels && navigator.mediaDevices.getUserMedia && !options.skipPermissionProbe) {
       temporaryStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     }
   } catch {
@@ -123,4 +127,32 @@ export async function startCameraStream(options: StartCameraOptions): Promise<Me
   }
 
   throw lastError ?? new Error("Не удалось запустить камеру.");
+}
+
+export async function syncVideoInputDevices(
+  activeDeviceId: string,
+  setDevices: (devices: DeviceOption[]) => void,
+  setActiveDeviceId: (deviceId: string) => void,
+  options: ListDevicesOptions & { fallbackLabel?: string } = {}
+) {
+  const cameras = await listVideoInputDevices(options);
+  if (cameras.length > 0) {
+    setDevices(cameras);
+    if (!activeDeviceId || cameras.every((camera) => camera.deviceId !== activeDeviceId)) {
+      setActiveDeviceId(cameras[0].deviceId);
+    }
+    return cameras;
+  }
+
+  if (options.fallbackLabel) {
+    const fallbackDevice = { deviceId: "default", label: options.fallbackLabel };
+    setDevices([fallbackDevice]);
+    if (!activeDeviceId) {
+      setActiveDeviceId(fallbackDevice.deviceId);
+    }
+    return [fallbackDevice];
+  }
+
+  setDevices([]);
+  return [];
 }
