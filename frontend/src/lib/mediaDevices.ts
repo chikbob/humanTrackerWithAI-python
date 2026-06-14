@@ -53,7 +53,7 @@ type ListDevicesOptions = {
   skipPermissionProbe?: boolean;
 };
 
-const CAMERA_RELEASE_DELAY_MS = 350;
+const CAMERA_RELEASE_DELAY_MS = 1200;
 let lastCameraReleaseAt = 0;
 let permissionProbeCompleted = false;
 
@@ -141,6 +141,16 @@ export async function listVideoInputDevices(options: ListDevicesOptions = {}): P
     return [];
   }
 
+  if (isWindowsClient()) {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices
+      .filter((item) => item.kind === "videoinput")
+      .map((item, index) => ({
+        deviceId: item.deviceId,
+        label: normalizeCameraLabel(item.label, index)
+      }));
+  }
+
   let temporaryStream: MediaStream | null = null;
   try {
     const initialDevices = await navigator.mediaDevices.enumerateDevices();
@@ -217,6 +227,29 @@ function buildCameraAttempts({ activeDeviceId, preferredWidth = 1280, preferredH
   return attempts;
 }
 
+function buildAlternateDeviceAttempts(devices: CameraDiagnosticsDevice[], activeDeviceId: string): MediaStreamConstraints[] {
+  const alternates = devices.filter((device) => device.deviceId && device.deviceId !== activeDeviceId);
+  const attempts: MediaStreamConstraints[] = [];
+  for (const device of alternates) {
+    attempts.push({
+      video: {
+        deviceId: { exact: device.deviceId },
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+        frameRate: { ideal: 24, max: 30 }
+      },
+      audio: false
+    });
+    attempts.push({
+      video: {
+        deviceId: { exact: device.deviceId }
+      },
+      audio: false
+    });
+  }
+  return attempts;
+}
+
 function canRetryCameraStart(error: unknown) {
   if (!(error instanceof DOMException)) {
     return false;
@@ -250,7 +283,11 @@ export async function startCameraStream(options: StartCameraOptions): Promise<Me
   }
 
   await waitForCameraRelease();
-  const attempts = buildCameraAttempts(options);
+  const devicesBefore = await collectVideoDevices();
+  const attempts = [
+    ...buildCameraAttempts(options),
+    ...buildAlternateDeviceAttempts(devicesBefore, options.activeDeviceId || "")
+  ];
   let lastError: unknown = null;
   const report: CameraDiagnosticsReport = {
     startedAt: new Date().toISOString(),
@@ -262,7 +299,7 @@ export async function startCameraStream(options: StartCameraOptions): Promise<Me
     enumerateDevicesAvailable: Boolean(navigator.mediaDevices?.enumerateDevices),
     permissionsApiAvailable: Boolean(navigator.permissions?.query),
     permissionState: await readCameraPermissionState(),
-    devicesBefore: await collectVideoDevices(),
+    devicesBefore,
     devicesAfter: [],
     attempts: [],
     selectedDeviceId: options.activeDeviceId || "default"
@@ -312,7 +349,7 @@ export async function startCameraStream(options: StartCameraOptions): Promise<Me
         throw error;
       }
       if (isWindowsClient()) {
-        await wait(250 + index * 200);
+        await wait(900 + index * 250);
       }
     }
   }

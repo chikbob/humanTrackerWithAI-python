@@ -54,6 +54,11 @@ export function MonitoringPage() {
     return () => navigator.mediaDevices?.removeEventListener?.("devicechange", readDevices);
   }, [activeDeviceId, isCameraEnabled]);
 
+  useEffect(() => () => {
+    stopCameraStream(streamRef.current);
+    streamRef.current = null;
+  }, []);
+
   useEffect(() => {
     async function startCamera() {
       if (!isCameraEnabled) {

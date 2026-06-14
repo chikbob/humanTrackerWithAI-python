@@ -107,6 +107,11 @@ export function AttendancePage() {
     return () => navigator.mediaDevices?.removeEventListener?.("devicechange", readDevices);
   }, [activeDeviceId, cameraEnabled]);
 
+  useEffect(() => () => {
+    stopCameraStream(streamRef.current);
+    streamRef.current = null;
+  }, []);
+
   useEffect(() => {
     async function startCamera() {
       if (!cameraEnabled) {
