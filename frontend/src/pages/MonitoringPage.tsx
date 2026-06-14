@@ -49,6 +49,7 @@ export function MonitoringPage() {
   const [cameraDebugReport, setCameraDebugReport] = useState<CameraDiagnosticsReport | null>(null);
   const [serverCameraMode, setServerCameraMode] = useState(false);
   const [serverCameraProbe, setServerCameraProbe] = useState<string>("");
+  const [serverCameraError, setServerCameraError] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -92,6 +93,7 @@ export function MonitoringPage() {
           videoRef.current.srcObject = null;
         }
         setServerCameraMode(false);
+        setServerCameraError("");
         return;
       }
 
@@ -102,6 +104,7 @@ export function MonitoringPage() {
       setCameraError("");
       setCameraDebugReport(null);
       setServerCameraProbe("");
+      setServerCameraError("");
       try {
         const stream = await startCameraStream({
           activeDeviceId,
@@ -154,9 +157,27 @@ export function MonitoringPage() {
           setServerCameraMode(true);
           setCameraError(`${message} Переключаюсь на локальный Windows fallback через OpenCV.`);
           fetch(`/api/v1/local-camera/probe?camera_index=${selectedCameraIndex}&width=640&height=480`)
-            .then((response) => response.json())
-            .then((payload) => setServerCameraProbe(JSON.stringify(payload, null, 2)))
-            .catch(() => setServerCameraProbe(""));
+            .then(async (response) => {
+              if (!response.ok) {
+                const detail = await response.text();
+                throw new Error(detail || `request_failed:${response.status}`);
+              }
+              return response.json();
+            })
+            .then((payload) => {
+              setServerCameraProbe(JSON.stringify(payload, null, 2));
+              if (!payload.ok) {
+                setServerCameraError("OpenCV fallback не смог открыть локальную камеру на стороне API.");
+              }
+            })
+            .catch((probeError) => {
+              setServerCameraProbe("");
+              setServerCameraError(
+                probeError instanceof Error
+                  ? `OpenCV fallback недоступен. Скорее всего, backend API не перезапущен после обновления или маршрут /api/v1/local-camera/* не поднялся. Детали: ${probeError.message}`
+                  : "OpenCV fallback недоступен."
+              );
+            });
           return;
         }
         setCameraError(message);
@@ -253,12 +274,18 @@ export function MonitoringPage() {
           </div>
           <div className="video-frame">
             {serverCameraMode ? (
-              <img ref={imageRef} src={serverCameraStreamUrl} alt="Server local camera stream" />
+              <img
+                ref={imageRef}
+                src={serverCameraStreamUrl}
+                alt="Server local camera stream"
+                onError={() => setServerCameraError("Не удалось открыть поток /api/v1/local-camera/stream. Перезапусти backend API на Windows и обнови страницу.")}
+              />
             ) : (
               <video ref={videoRef} muted playsInline />
             )}
           </div>
           {cameraError && <div className="inline-warning">{cameraError}</div>}
+          {serverCameraError && <div className="inline-warning">{serverCameraError}</div>}
           {serverCameraProbe && (
             <details className="debug-panel">
               <summary>Диагностика server camera fallback</summary>
