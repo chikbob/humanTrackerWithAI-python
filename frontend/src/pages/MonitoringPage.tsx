@@ -11,14 +11,16 @@ import {
   syncVideoInputDevices
 } from "../lib/mediaDevices";
 
-function captureFrame(video: HTMLVideoElement | null): string | null {
-  if (!video || !video.videoWidth || !video.videoHeight) return null;
+function captureFrame(element: HTMLVideoElement | HTMLImageElement | null): string | null {
+  const width = element instanceof HTMLVideoElement ? element.videoWidth : element?.naturalWidth || 0;
+  const height = element instanceof HTMLVideoElement ? element.videoHeight : element?.naturalHeight || 0;
+  if (!element || !width || !height) return null;
   const canvas = document.createElement("canvas");
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
+  canvas.width = width;
+  canvas.height = height;
   const context = canvas.getContext("2d");
   if (!context) return null;
-  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  context.drawImage(element, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL("image/jpeg", 0.82);
 }
 
@@ -45,13 +47,24 @@ export function MonitoringPage() {
   const [lastAnalysis, setLastAnalysis] = useState<FrameAnalysisResponse | null>(null);
   const [cameraError, setCameraError] = useState("");
   const [cameraDebugReport, setCameraDebugReport] = useState<CameraDiagnosticsReport | null>(null);
+  const [serverCameraMode, setServerCameraMode] = useState(false);
+  const [serverCameraProbe, setServerCameraProbe] = useState<string>("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const analysisLockRef = useRef(false);
   const cameraStartRequestRef = useRef(0);
 
   const browserSources = useMemo(() => (sources?.items || []).filter((item) => item.source_type === "browser_camera"), [sources]);
   const serverSources = useMemo(() => (sources?.items || []).filter((item) => item.source_type !== "browser_camera"), [sources]);
+  const selectedCameraIndex = useMemo(() => {
+    const index = devices.findIndex((device) => device.deviceId === activeDeviceId);
+    return index >= 0 ? index : 0;
+  }, [activeDeviceId, devices]);
+  const serverCameraStreamUrl = useMemo(
+    () => `/api/v1/local-camera/stream?camera_index=${selectedCameraIndex}&width=640&height=480`,
+    [selectedCameraIndex]
+  );
 
   useEffect(() => {
     async function readDevices() {
@@ -78,6 +91,7 @@ export function MonitoringPage() {
         if (videoRef.current) {
           videoRef.current.srcObject = null;
         }
+        setServerCameraMode(false);
         return;
       }
 
@@ -87,6 +101,7 @@ export function MonitoringPage() {
       streamRef.current = null;
       setCameraError("");
       setCameraDebugReport(null);
+      setServerCameraProbe("");
       try {
         const stream = await startCameraStream({
           activeDeviceId,
@@ -99,6 +114,7 @@ export function MonitoringPage() {
         }
 
         streamRef.current = stream;
+        setServerCameraMode(false);
         const [videoTrack] = stream.getVideoTracks();
         const resolvedDeviceId = videoTrack?.getSettings().deviceId || activeDeviceId;
         const resolvedLabel = videoTrack?.label || "Камера устройства";
@@ -128,11 +144,22 @@ export function MonitoringPage() {
         if (cameraStartRequestRef.current !== requestId) {
           return;
         }
-        setCameraError(getCameraStartErrorMessage(error));
+        const message = getCameraStartErrorMessage(error);
         setIsAnalysisEnabled(false);
         if (videoRef.current) {
           videoRef.current.srcObject = null;
         }
+        const isWindows = /win/i.test(navigator.platform || navigator.userAgent);
+        if (isWindows) {
+          setServerCameraMode(true);
+          setCameraError(`${message} Переключаюсь на локальный Windows fallback через OpenCV.`);
+          fetch(`/api/v1/local-camera/probe?camera_index=${selectedCameraIndex}&width=640&height=480`)
+            .then((response) => response.json())
+            .then((payload) => setServerCameraProbe(JSON.stringify(payload, null, 2)))
+            .catch(() => setServerCameraProbe(""));
+          return;
+        }
+        setCameraError(message);
       }
     }
 
@@ -145,11 +172,12 @@ export function MonitoringPage() {
   const analyzeMutation = useMutation({
     mutationFn: async () => {
       const imageBase64 = captureFrame(videoRef.current);
-      if (!imageBase64) {
+      const fallbackImageBase64 = imageBase64 || captureFrame(imageRef.current);
+      if (!fallbackImageBase64) {
         throw new Error("Нет доступного кадра для анализа.");
       }
       return apiClient.analyzeFrame({
-        image_base64: imageBase64,
+        image_base64: fallbackImageBase64,
         model_name: activeModel
       });
     },
@@ -224,9 +252,19 @@ export function MonitoringPage() {
             </button>
           </div>
           <div className="video-frame">
-            <video ref={videoRef} muted playsInline />
+            {serverCameraMode ? (
+              <img ref={imageRef} src={serverCameraStreamUrl} alt="Server local camera stream" />
+            ) : (
+              <video ref={videoRef} muted playsInline />
+            )}
           </div>
           {cameraError && <div className="inline-warning">{cameraError}</div>}
+          {serverCameraProbe && (
+            <details className="debug-panel">
+              <summary>Диагностика server camera fallback</summary>
+              <pre>{serverCameraProbe}</pre>
+            </details>
+          )}
           {cameraDebugReport && (
             <details className="debug-panel">
               <summary>Диагностика камеры</summary>

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -37,6 +38,7 @@ from db.repository import (
 )
 from services.system_api import build_incident_summary, load_dashboard_summary
 from services.telemetry import build_health_payload, build_operational_summary, build_prometheus_metrics, build_worker_runtime_metrics
+from services.local_camera import encode_frame_as_jpeg, open_local_camera, read_local_camera_frame
 from services.vision_runtime import analyze_frame, list_available_models, save_snapshot
 
 
@@ -276,6 +278,55 @@ def create_app() -> FastAPI:
             "image_height": analysis["image_height"],
             "annotated_image_base64": analysis["annotated_image_base64"],
         }
+
+    @app.get("/api/v1/local-camera/probe")
+    def get_local_camera_probe(camera_index: int = Query(0, ge=0, le=10), width: int = Query(640, ge=160, le=1920), height: int = Query(480, ge=120, le=1080)):
+        frame, meta = read_local_camera_frame(camera_index, width=width, height=height)
+        return {
+            "camera_index": camera_index,
+            "width": width,
+            "height": height,
+            "ok": frame is not None,
+            "backend": meta.get("backend_label"),
+            "attempts": meta.get("attempts", []),
+        }
+
+    @app.get("/api/v1/local-camera/frame")
+    def get_local_camera_frame(camera_index: int = Query(0, ge=0, le=10), width: int = Query(640, ge=160, le=1920), height: int = Query(480, ge=120, le=1080)):
+        frame, meta = read_local_camera_frame(camera_index, width=width, height=height)
+        if frame is None:
+            raise HTTPException(status_code=503, detail="local_camera_open_failed:" + ", ".join(meta.get("attempts", [])))
+        jpeg_bytes = encode_frame_as_jpeg(frame)
+        if jpeg_bytes is None:
+            raise HTTPException(status_code=500, detail="local_camera_encode_failed")
+        return Response(content=jpeg_bytes, media_type="image/jpeg")
+
+    @app.get("/api/v1/local-camera/stream")
+    def get_local_camera_stream(camera_index: int = Query(0, ge=0, le=10), width: int = Query(640, ge=160, le=1920), height: int = Query(480, ge=120, le=1080)):
+        def generate():
+            cap, meta = open_local_camera(camera_index, width=width, height=height)
+            if cap is None:
+                message = ("local_camera_open_failed:" + ", ".join(meta.get("attempts", []))).encode("utf-8")
+                yield b"--frame\r\nContent-Type: text/plain\r\n\r\n" + message + b"\r\n"
+                return
+            try:
+                while True:
+                    ret, frame = cap.read()
+                    if not ret or frame is None:
+                        time_message = f"local_camera_frame_failed:{meta.get('backend_label')}".encode("utf-8")
+                        yield b"--frame\r\nContent-Type: text/plain\r\n\r\n" + time_message + b"\r\n"
+                        break
+                    jpeg_bytes = encode_frame_as_jpeg(frame)
+                    if jpeg_bytes is None:
+                        continue
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n\r\n" + jpeg_bytes + b"\r\n"
+                    )
+            finally:
+                cap.release()
+
+        return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
 
     @app.get("/api/v1/attendance/today")
     def get_attendance_today():

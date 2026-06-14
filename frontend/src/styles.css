@@ -449,6 +449,7 @@ textarea.input {
 }
 
 .media-panel video,
+.media-panel .video-frame img,
 .analysis-preview {
   width: 100%;
   border-radius: 20px;
