@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, AttendanceCheckpointResponse, Employee } from "../lib/api";
 import {
+  CameraDiagnosticsReport,
   DeviceOption,
+  formatCameraDiagnosticsReport,
   getCameraStartErrorMessage,
+  stopCameraStream,
   startCameraStream,
   syncVideoInputDevices
 } from "../lib/mediaDevices";
@@ -52,6 +55,7 @@ export function AttendancePage() {
   const [search, setSearch] = useState("");
   const [lastResult, setLastResult] = useState<AttendanceCheckpointResponse | null>(null);
   const [cameraError, setCameraError] = useState("");
+  const [cameraDebugReport, setCameraDebugReport] = useState<CameraDiagnosticsReport | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cameraStartRequestRef = useRef(0);
@@ -106,7 +110,7 @@ export function AttendancePage() {
   useEffect(() => {
     async function startCamera() {
       if (!cameraEnabled) {
-        streamRef.current?.getTracks().forEach((track) => track.stop());
+        stopCameraStream(streamRef.current);
         streamRef.current = null;
         if (videoRef.current) {
           videoRef.current.srcObject = null;
@@ -116,13 +120,17 @@ export function AttendancePage() {
 
       const requestId = cameraStartRequestRef.current + 1;
       cameraStartRequestRef.current = requestId;
-      streamRef.current?.getTracks().forEach((track) => track.stop());
+      stopCameraStream(streamRef.current);
       streamRef.current = null;
       setCameraError("");
+      setCameraDebugReport(null);
       try {
-        const stream = await startCameraStream({ activeDeviceId });
+        const stream = await startCameraStream({
+          activeDeviceId,
+          onDebugReport: setCameraDebugReport
+        });
         if (cameraStartRequestRef.current !== requestId) {
-          stream.getTracks().forEach((track) => track.stop());
+          stopCameraStream(stream);
           return;
         }
 
@@ -139,7 +147,7 @@ export function AttendancePage() {
           skipPermissionProbe: true
         });
         if (cameraStartRequestRef.current !== requestId) {
-          stream.getTracks().forEach((track) => track.stop());
+          stopCameraStream(stream);
           return;
         }
         if (!cameras.length && resolvedDeviceId && resolvedDeviceId !== activeDeviceId) {
@@ -270,6 +278,9 @@ export function AttendancePage() {
             <button className="button secondary" onClick={() => setCameraEnabled((value) => !value)}>
               {cameraEnabled ? "Остановить камеру" : "Включить камеру"}
             </button>
+            <button className="button ghost" type="button" onClick={() => void syncVideoInputDevices(activeDeviceId, setDevices, setActiveDeviceId, { skipPermissionProbe: cameraEnabled || Boolean(streamRef.current) })}>
+              Обновить камеры
+            </button>
             <button className="button" disabled={!cameraEnabled || checkpointMutation.isPending || !selectedEmployeeId} onClick={() => checkpointMutation.mutate()}>
               {checkpointMutation.isPending ? "Распознаю..." : "Отметить вход / выход"}
             </button>
@@ -281,6 +292,12 @@ export function AttendancePage() {
 
           {cameraError && (
             <div className="inline-warning">{cameraError}</div>
+          )}
+          {cameraDebugReport && (
+            <details className="debug-panel">
+              <summary>Диагностика камеры</summary>
+              <pre>{formatCameraDiagnosticsReport(cameraDebugReport)}</pre>
+            </details>
           )}
           {checkpointMutation.error instanceof Error && (
             <div className="inline-warning">{checkpointMutation.error.message}</div>

@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiClient, FrameAnalysisResponse } from "../lib/api";
 import {
+  CameraDiagnosticsReport,
   DeviceOption,
+  formatCameraDiagnosticsReport,
   getCameraStartErrorMessage,
+  stopCameraStream,
   startCameraStream,
   syncVideoInputDevices
 } from "../lib/mediaDevices";
@@ -30,6 +33,7 @@ export function MonitoringPage() {
   const [activeModel, setActiveModel] = useState("yolov8s.pt");
   const [lastAnalysis, setLastAnalysis] = useState<FrameAnalysisResponse | null>(null);
   const [cameraError, setCameraError] = useState("");
+  const [cameraDebugReport, setCameraDebugReport] = useState<CameraDiagnosticsReport | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const analysisLockRef = useRef(false);
@@ -53,7 +57,7 @@ export function MonitoringPage() {
   useEffect(() => {
     async function startCamera() {
       if (!isCameraEnabled) {
-        streamRef.current?.getTracks().forEach((track) => track.stop());
+        stopCameraStream(streamRef.current);
         streamRef.current = null;
         if (videoRef.current) {
           videoRef.current.srcObject = null;
@@ -63,13 +67,17 @@ export function MonitoringPage() {
 
       const requestId = cameraStartRequestRef.current + 1;
       cameraStartRequestRef.current = requestId;
-      streamRef.current?.getTracks().forEach((track) => track.stop());
+      stopCameraStream(streamRef.current);
       streamRef.current = null;
       setCameraError("");
+      setCameraDebugReport(null);
       try {
-        const stream = await startCameraStream({ activeDeviceId });
+        const stream = await startCameraStream({
+          activeDeviceId,
+          onDebugReport: setCameraDebugReport
+        });
         if (cameraStartRequestRef.current !== requestId) {
-          stream.getTracks().forEach((track) => track.stop());
+          stopCameraStream(stream);
           return;
         }
 
@@ -86,7 +94,7 @@ export function MonitoringPage() {
           skipPermissionProbe: true
         });
         if (cameraStartRequestRef.current !== requestId) {
-          stream.getTracks().forEach((track) => track.stop());
+          stopCameraStream(stream);
           return;
         }
         if (!cameras.length && resolvedDeviceId && resolvedDeviceId !== activeDeviceId) {
@@ -184,6 +192,9 @@ export function MonitoringPage() {
             <button className="button secondary" onClick={() => setIsCameraEnabled((value) => !value)}>
               {isCameraEnabled ? "Остановить поток" : "Запустить поток"}
             </button>
+            <button className="button ghost" type="button" onClick={() => void syncVideoInputDevices(activeDeviceId, setDevices, setActiveDeviceId, { skipPermissionProbe: isCameraEnabled || Boolean(streamRef.current) })}>
+              Обновить камеры
+            </button>
             <button className="button" disabled={!isCameraEnabled || analyzeMutation.isPending} onClick={() => analyzeMutation.mutate()}>
               {analyzeMutation.isPending ? "Анализ..." : "Проверить текущий кадр"}
             </button>
@@ -192,6 +203,12 @@ export function MonitoringPage() {
             <video ref={videoRef} muted playsInline />
           </div>
           {cameraError && <div className="inline-warning">{cameraError}</div>}
+          {cameraDebugReport && (
+            <details className="debug-panel">
+              <summary>Диагностика камеры</summary>
+              <pre>{formatCameraDiagnosticsReport(cameraDebugReport)}</pre>
+            </details>
+          )}
           {analyzeMutation.error instanceof Error && <div className="inline-warning">{analyzeMutation.error.message}</div>}
         </section>
 
