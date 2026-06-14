@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, AttendanceCheckpointResponse, Employee } from "../lib/api";
-import { resolveWindowsCameraFallback } from "../lib/localCameraBridge";
+import { isWindowsClientBrowser, resolveWindowsCameraFallback } from "../lib/localCameraBridge";
 import {
   CameraDiagnosticsReport,
   DeviceOption,
@@ -83,6 +83,35 @@ export function AttendancePage() {
     const index = devices.findIndex((device) => device.deviceId === activeDeviceId);
     return index >= 0 ? index : 0;
   }, [activeDeviceId, devices]);
+
+  async function activateWindowsFallback(requestId: number, message: string) {
+    setCameraError(`${message} Переключаюсь на Windows fallback.`);
+    setServerCameraMode(false);
+    setServerCameraStreamUrl("");
+    setServerCameraSourceLabel("");
+    setServerCameraProbe("");
+    setServerCameraError("");
+    try {
+      const resolved = await resolveWindowsCameraFallback(selectedCameraIndex);
+      if (cameraStartRequestRef.current !== requestId) {
+        return;
+      }
+      setServerCameraProbe(resolved.probeText);
+      setServerCameraStreamUrl(resolved.streamUrl);
+      setServerCameraSourceLabel(resolved.sourceLabel);
+      setServerCameraMode(true);
+      if (!resolved.probe.ok) {
+        setServerCameraError(`${resolved.sourceLabel} не смог открыть локальную камеру.`);
+      }
+    } catch (probeError) {
+      if (cameraStartRequestRef.current !== requestId) {
+        return;
+      }
+      setServerCameraMode(false);
+      setServerCameraProbe("");
+      setServerCameraError(probeError instanceof Error ? probeError.message : "Windows fallback недоступен.");
+    }
+  }
 
   const availableEmployees = useMemo(
     () => (employeesData?.items || []).filter((employee) => (employee.status || "").trim() === "active"),
@@ -184,7 +213,15 @@ export function AttendancePage() {
           if (!hasFrame) {
             stopCameraStream(stream);
             streamRef.current = null;
-            setCameraError("Камера открылась, но браузер не получил ни одного видеокадра. Для встроенной камеры Windows это обычно означает сбой драйвера или пустой поток устройства.");
+            if (videoRef.current) {
+              videoRef.current.srcObject = null;
+            }
+            const noFrameMessage = "Камера открылась, но браузер не получил ни одного видеокадра. Для встроенной камеры Windows это обычно означает сбой драйвера или пустой поток устройства.";
+            if (isWindowsClientBrowser()) {
+              await activateWindowsFallback(requestId, noFrameMessage);
+              return;
+            }
+            setCameraError(noFrameMessage);
             return;
           }
         }
@@ -207,23 +244,8 @@ export function AttendancePage() {
         if (videoRef.current) {
           videoRef.current.srcObject = null;
         }
-        const isWindows = /win/i.test(navigator.platform || navigator.userAgent);
-        if (isWindows) {
-          setServerCameraMode(true);
-          setCameraError(`${message} Переключаюсь на Windows fallback.`);
-          resolveWindowsCameraFallback(selectedCameraIndex)
-            .then((resolved) => {
-              setServerCameraProbe(resolved.probeText);
-              setServerCameraStreamUrl(resolved.streamUrl);
-              setServerCameraSourceLabel(resolved.sourceLabel);
-              if (!resolved.probe.ok) {
-                setServerCameraError(`${resolved.sourceLabel} не смог открыть локальную камеру.`);
-              }
-            })
-            .catch((probeError) => {
-              setServerCameraProbe("");
-              setServerCameraError(probeError instanceof Error ? probeError.message : "Windows fallback недоступен.");
-            });
+        if (isWindowsClientBrowser()) {
+          await activateWindowsFallback(requestId, message);
           return;
         }
         setCameraError(message);
