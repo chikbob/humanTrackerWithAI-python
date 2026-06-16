@@ -50,6 +50,11 @@ function buildEmployeeLabel(employee: Employee) {
   return parts.join(" · ");
 }
 
+function normalizeNumericId(value: number | string | null | undefined): number {
+  const normalized = Number(value);
+  return Number.isFinite(normalized) ? normalized : 0;
+}
+
 export function AttendancePage() {
   const queryClient = useQueryClient();
   const { data: employeesData } = useQuery({ queryKey: ["employees"], queryFn: apiClient.employees, refetchInterval: 20_000 });
@@ -135,14 +140,14 @@ export function AttendancePage() {
       setSelectedEmployeeId(0);
       return;
     }
-    if (!selectedEmployeeId || availableEmployees.every((employee) => employee.id !== selectedEmployeeId)) {
-      setSelectedEmployeeId(availableEmployees[0].id);
+    if (!selectedEmployeeId || availableEmployees.every((employee) => normalizeNumericId(employee.id) !== normalizeNumericId(selectedEmployeeId))) {
+      setSelectedEmployeeId(normalizeNumericId(availableEmployees[0].id));
     }
   }, [availableEmployees, selectedEmployeeId]);
 
   useEffect(() => {
     if (!selectedAccessPointId && accessPointsData?.items[0]) {
-      setSelectedAccessPointId(accessPointsData.items[0].id);
+      setSelectedAccessPointId(normalizeNumericId(accessPointsData.items[0].id));
     }
   }, [accessPointsData, selectedAccessPointId]);
 
@@ -340,7 +345,7 @@ export function AttendancePage() {
               <span>Сотрудник</span>
               <select className="input like-select" value={selectedEmployeeId} onChange={(event) => setSelectedEmployeeId(Number(event.target.value))}>
                 {filteredEmployees.map((employee) => (
-                  <option key={employee.id} value={employee.id}>{buildEmployeeLabel(employee)}</option>
+                  <option key={employee.id} value={normalizeNumericId(employee.id)}>{buildEmployeeLabel(employee)}</option>
                 ))}
               </select>
             </label>
@@ -349,7 +354,7 @@ export function AttendancePage() {
                 <span>Точка доступа</span>
                 <select className="input like-select" value={selectedAccessPointId} onChange={(event) => setSelectedAccessPointId(Number(event.target.value))}>
                   {(accessPointsData?.items || []).map((item) => (
-                    <option key={item.id} value={item.id}>{item.name}</option>
+                    <option key={item.id} value={normalizeNumericId(item.id)}>{item.name}</option>
                   ))}
                 </select>
               </label>
