@@ -112,6 +112,17 @@ export function DirectoryPage() {
       queryClient.invalidateQueries({ queryKey: ["audit-logs"] });
     }
   });
+  const deleteMutation = useMutation({
+    mutationFn: (employeeId: number) => apiClient.deleteEmployee(employeeId),
+    onSuccess: (_, employeeId) => {
+      queryClient.invalidateQueries({ queryKey: ["employees"] });
+      queryClient.invalidateQueries({ queryKey: ["audit-logs"] });
+      if (selectedEmployeeId === employeeId) {
+        setSelectedEmployeeId(0);
+        setForm(emptyForm());
+      }
+    }
+  });
 
   const filteredItems = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -153,6 +164,17 @@ export function DirectoryPage() {
     setSortDirection("asc");
   }
 
+  function startEditingEmployee(employee: Employee) {
+    setSelectedEmployeeId(employee.id);
+    setForm(employeeToForm(employee));
+  }
+
+  function handleDeleteEmployee(employee: Employee) {
+    const confirmed = window.confirm(`Удалить сотрудника "${employee.display_name || employee.full_name}"? Связанные проходы, события и инциденты тоже будут удалены.`);
+    if (!confirmed) return;
+    deleteMutation.mutate(employee.id);
+  }
+
   if (isLoading) return <div className="page-state">Загружаю справочник…</div>;
   if (error || !data) return <div className="page-state error">Не удалось загрузить сотрудников.</div>;
 
@@ -180,7 +202,7 @@ export function DirectoryPage() {
         </section>
 
         <section className="panel">
-          <div className="panel-header"><h3>{selectedEmployee ? "Карточка сотрудника" : "Новая запись"}</h3><span>{selectedEmployee ? selectedEmployee.display_name || selectedEmployee.full_name : "create"}</span></div>
+          <div className="panel-header"><h3>{selectedEmployee ? "Редактирование сотрудника" : "Новая запись"}</h3><span>{selectedEmployee ? selectedEmployee.display_name || selectedEmployee.full_name : "create"}</span></div>
           <div className="form-grid">
             <div className="triple-grid">
               <label className="field-block"><span>Фамилия</span><input className="input" value={form.last_name} onChange={(event) => setForm((current) => ({ ...current, last_name: event.target.value }))} /></label>
@@ -205,10 +227,16 @@ export function DirectoryPage() {
             <div className="button-row">
               <button className="button secondary" type="button" onClick={() => { setSelectedEmployeeId(0); setForm(emptyForm()); }}>Очистить форму</button>
               <button className="button secondary" type="button" disabled={!selectedEmployee || statusMutation.isPending} onClick={() => selectedEmployee && statusMutation.mutate({ employeeId: selectedEmployee.id, status: form.status })}>Сменить статус</button>
+              <button className="button secondary" type="button" disabled={!selectedEmployee || deleteMutation.isPending} onClick={() => selectedEmployee && handleDeleteEmployee(selectedEmployee)}>
+                {deleteMutation.isPending ? "Удаляю..." : "Удалить сотрудника"}
+              </button>
               <button className="button" type="button" disabled={createMutation.isPending || updateMutation.isPending} onClick={() => selectedEmployee ? updateMutation.mutate() : createMutation.mutate()}>
                 {selectedEmployee ? "Сохранить изменения" : "Создать сотрудника"}
               </button>
             </div>
+            {updateMutation.error instanceof Error && <div className="inline-warning">{updateMutation.error.message}</div>}
+            {createMutation.error instanceof Error && <div className="inline-warning">{createMutation.error.message}</div>}
+            {deleteMutation.error instanceof Error && <div className="inline-warning">{deleteMutation.error.message}</div>}
           </div>
         </section>
       </div>
@@ -248,11 +276,12 @@ export function DirectoryPage() {
                 <th>Дата приема</th>
                 <th>Источник данных</th>
                 <th>Последний sync</th>
+                <th>Действия</th>
               </tr>
             </thead>
             <tbody>
               {pageItems.map((employee: Employee, index) => (
-                <tr key={`${employee.id || "emp"}-${index}`} onClick={() => { setSelectedEmployeeId(employee.id); setForm(employeeToForm(employee)); }} className={selectedEmployeeId === employee.id ? "row-selected" : ""}>
+                <tr key={`${employee.id || "emp"}-${index}`} onClick={() => startEditingEmployee(employee)} className={selectedEmployeeId === employee.id ? "row-selected" : ""}>
                   <td>{(currentPage - 1) * pageSize + index + 1}</td>
                   <td>{String(employee.display_name || employee.full_name || "—")}</td>
                   <td>{String(employee.employee_number || "—")}</td>
@@ -262,6 +291,16 @@ export function DirectoryPage() {
                   <td>{formatDate(employee.hire_date)}</td>
                   <td>{String(employee.source_system || "local")}</td>
                   <td>{formatDateTime(employee.last_synced_at)}</td>
+                  <td>
+                    <div className="table-actions">
+                      <button className="button secondary compact" type="button" onClick={(event) => { event.stopPropagation(); startEditingEmployee(employee); }}>
+                        Редактировать
+                      </button>
+                      <button className="button danger compact" type="button" disabled={deleteMutation.isPending} onClick={(event) => { event.stopPropagation(); handleDeleteEmployee(employee); }}>
+                        Удалить
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

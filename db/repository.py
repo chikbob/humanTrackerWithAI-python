@@ -1372,6 +1372,74 @@ def update_employee_status(*, employee_id: int, status: str):
     conn.close()
 
 
+def delete_employee(*, employee_id: int) -> dict[str, int]:
+    conn = get_db_conn()
+    employee = conn.execute("SELECT id FROM employees WHERE id = ?", (employee_id,)).fetchone()
+    if employee is None:
+        conn.close()
+        raise ValueError(f"employee_not_found:{employee_id}")
+
+    access_log_ids = [
+        int(row["id"])
+        for row in conn.execute("SELECT id FROM access_logs WHERE employee_id = ?", (employee_id,)).fetchall()
+    ]
+
+    deleted_detection_events = conn.execute(
+        """
+        DELETE FROM detection_events
+        WHERE employee_id = ? OR identified_employee_id = ?
+        """,
+        (employee_id, employee_id),
+    ).rowcount
+
+    if access_log_ids:
+        placeholders = ", ".join("?" for _ in access_log_ids)
+        deleted_events = conn.execute(
+            f"""
+            DELETE FROM events
+            WHERE employee_id = ?
+               OR identified_employee_id = ?
+               OR access_log_id IN ({placeholders})
+            """,
+            (employee_id, employee_id, *access_log_ids),
+        ).rowcount
+    else:
+        deleted_events = conn.execute(
+            """
+            DELETE FROM events
+            WHERE employee_id = ? OR identified_employee_id = ?
+            """,
+            (employee_id, employee_id),
+        ).rowcount
+
+    deleted_attendance_sessions = conn.execute(
+        "DELETE FROM attendance_sessions WHERE employee_id = ?",
+        (employee_id,),
+    ).rowcount
+    deleted_access_logs = conn.execute(
+        "DELETE FROM access_logs WHERE employee_id = ?",
+        (employee_id,),
+    ).rowcount
+    deleted_incidents = conn.execute(
+        "DELETE FROM incidents WHERE employee_id = ?",
+        (employee_id,),
+    ).rowcount
+    deleted_employees = conn.execute(
+        "DELETE FROM employees WHERE id = ?",
+        (employee_id,),
+    ).rowcount
+    conn.commit()
+    conn.close()
+    return {
+        "employees": deleted_employees,
+        "attendance_sessions": deleted_attendance_sessions,
+        "access_logs": deleted_access_logs,
+        "events": deleted_events,
+        "detection_events": deleted_detection_events,
+        "incidents": deleted_incidents,
+    }
+
+
 def ensure_demo_employees():
     """
     Seed a minimal employee list for a stable thesis demo.

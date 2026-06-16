@@ -16,6 +16,7 @@ from analytics.access import enrich_event_rows
 from db.repository import (
     append_audit_log,
     create_employee,
+    delete_employee,
     create_video_source,
     init_db,
     link_event_to_employee,
@@ -554,6 +555,25 @@ def create_app() -> FastAPI:
             details={"status": payload.status},
         )
         return {"ok": True, "employee_id": employee_id, "status": payload.status}
+
+    @app.delete("/api/v1/employees/{employee_id}")
+    def delete_employee_route(employee_id: int, actor_name: str = "api", actor_role: str = "admin"):
+        try:
+            result = delete_employee(employee_id=employee_id)
+        except ValueError as exc:
+            detail = str(exc)
+            if detail.startswith("employee_not_found"):
+                raise HTTPException(status_code=404, detail=detail) from exc
+            raise HTTPException(status_code=400, detail=detail) from exc
+        append_audit_log(
+            actor_name=actor_name,
+            actor_role=actor_role,
+            action="employee.deleted",
+            resource_type="employee",
+            resource_id=str(employee_id),
+            details=result,
+        )
+        return {"ok": True, "employee_id": employee_id, "deleted": result}
 
     @app.get("/api/v1/events")
     def get_events(limit: int = Query(200, ge=1, le=5000)):

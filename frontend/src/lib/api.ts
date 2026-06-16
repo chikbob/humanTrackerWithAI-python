@@ -215,6 +215,7 @@ const jsonHeaders = {
 function mapApiError(detail: string) {
   if (detail.startsWith("employee_inactive:")) return "Выбранный сотрудник не активен и не может быть отмечен.";
   if (detail.startsWith("employee_not_found:")) return "Сотрудник не найден.";
+  if (detail === "employee_not_found") return "Сотрудник не найден.";
   if (detail.startsWith("access_point_not_found:")) return "Точка доступа не найдена.";
   if (detail === "person_not_detected") return "Человек в кадре не обнаружен.";
   if (detail === "multiple_people_detected") return "В кадре должно быть только одно лицо/один человек.";
@@ -267,6 +268,11 @@ export const apiClient = {
       headers: jsonHeaders,
       body: JSON.stringify(payload)
     }),
+  deleteEmployee: (employeeId: number, actorName = "react-ui", actorRole = "admin") =>
+    api<{ ok: boolean; employee_id: number; deleted: Record<string, number> }>(
+      `/api/v1/employees/${employeeId}?actor_name=${encodeURIComponent(actorName)}&actor_role=${encodeURIComponent(actorRole)}`,
+      { method: "DELETE" }
+    ),
   linkEventToEmployee: (eventId: string, payload: Record<string, unknown>) =>
     api<{ event_id: string; employee_id: number; identification_status: string }>(`/api/v1/events/${eventId}/link`, {
       method: "PUT",

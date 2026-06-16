@@ -248,6 +248,40 @@ class ApiAppTests(unittest.TestCase):
         self.assertEqual(len(payload["items"]), 1)
         self.assertEqual(payload["items"][0]["actor_name"], "API Operator")
 
+    def test_delete_employee_endpoint_removes_employee_and_related_records(self):
+        employee_id = repository.load_employees()[0]["id"]
+        access_point_id = repository.load_access_points()[0]["id"]
+        repository.register_employee_attendance(
+            employee_id=employee_id,
+            access_point_id=access_point_id,
+            model_name="yolov8n.pt",
+            source_type="browser_camera",
+            detection_confidence=0.9,
+            note="seed attendance",
+        )
+        repository.upsert_incident(
+            event_id="evt-api-employee-delete",
+            source_id=1,
+            zone_name="Gate A",
+            incident_type="employee_related",
+            severity="low",
+            status="new",
+            confidence=0.5,
+            snapshot_path="",
+            employee_id=employee_id,
+            identification_status="linked_from_directory",
+            started_at=time.time(),
+        )
+
+        response = self.client.delete(f"/api/v1/employees/{employee_id}")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["employee_id"], employee_id)
+        self.assertGreaterEqual(payload["deleted"]["employees"], 1)
+        self.assertEqual(repository.load_employees(), [])
+        self.assertEqual(self.client.get("/api/v1/attendance/today").json()["items"], [])
+        self.assertTrue(all(item.get("employee_id") != employee_id for item in repository.load_events()))
+
 
 if __name__ == "__main__":
     unittest.main()

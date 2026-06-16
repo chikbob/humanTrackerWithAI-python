@@ -433,6 +433,24 @@ textarea.input {
   border-color: rgba(55, 211, 167, 0.24);
 }
 
+.button.danger {
+  background: rgba(255, 106, 122, 0.12);
+  color: #ffd9de;
+  border-color: rgba(255, 106, 122, 0.24);
+}
+
+.button.compact {
+  min-height: 36px;
+  padding: 8px 12px;
+  font-size: 0.88rem;
+}
+
+.table-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .toggle-row {
   display: flex;
   align-items: center;
